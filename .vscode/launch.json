@@ -1,0 +1,26 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        
+        {
+            "name": "Debug (JLink Segger)",
+            "cwd": "${workspaceRoot}",
+            "executable": "./cf2.elf",
+            "request": "launch",
+            "interface": "swd",
+            "type": "cortex-debug",
+            "device": "STM32F405RG",
+            "svdFile": "STM32F405.svd",
+            "servertype": "jlink",
+            "runToMain": true,
+            "preLaunchCommands": [
+                "set mem inaccessible-by-default off",
+                "enable breakpoint",
+                "monitor reset"
+            ]
+        }
+    ]
+}
