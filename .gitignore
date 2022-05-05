@@ -6,7 +6,7 @@ bin/*
 .project
 .pydevproject
 .settings/*
-.vscode/*
+
 *~
 tools/make/config.mk
 cflie.*
