@@ -7,7 +7,7 @@
 #include "dwTypes.h"
 #include "adhocdeck.h"
 
-#define MAX_BODY_UNIT_NUMBER 7
+#define MAX_BODY_UNIT_NUMBER 10
 //#define MAX_BODY_UNIT_NUMBER (FRAME_LEN_MAX - sizeof(Ranging_Message_Header_t)) / sizeof(Body_Unit_t) // 1 ~ 83
 #define RANGING_TABLE_SIZE 10
 #define RANGING_TABLE_HOLD_TIME 10000
@@ -29,19 +29,27 @@ typedef struct {
 
 /* Ranging Message Header*/
 typedef struct {
-  uint16_t srcAddress; // 2 byte
-  uint16_t msgSequence; // 2 byte
+  uint16_t srcAddress;               // 2 byte
+  uint16_t msgSequence;              // 2 byte
   Timestamp_Tuple_t lastTxTimestamp; // 10 byte
-  short velocity; // 2 byte cm/s
-  uint16_t msgLength; // 2 byte
-  uint16_t filter; // 16 bits bloom filter
+  short velocity;                    // 2 byte cm/s
+  /*--1添加--*/
+  short velocityXInWorld; // 2 byte cm/s 在世界坐标系下的速度（不是基于机体坐标系的速度）
+  short velocityYInWorld; // 2 byte cm/s 在世界坐标系下的速度（不是基于机体坐标系的速度）
+  float gyroZ;            // 4 byte rad/s
+  uint16_t positionZ;     // 2 byte cm/s
+  bool keep_flying;       // 无人机的飞行状态
+  int8_t stage;          // 飞行阶段
+  /*--1添加--*/
+  uint16_t msgLength;                               // 2 byte
+  uint16_t filter;                                  // 16 bits bloom filter
 } __attribute__((packed)) Ranging_Message_Header_t; // 20 byte
 
 /* Ranging Message */
 typedef struct {
-  Ranging_Message_Header_t header; // 18 byte
+  Ranging_Message_Header_t header;             // 18 byte
   Body_Unit_t bodyUnits[MAX_BODY_UNIT_NUMBER]; // 12 byte * MAX_NEIGHBOR_SIZE
-} __attribute__((packed)) Ranging_Message_t; // 20 + 12 byte * MAX_NEIGHBOR_SIZE
+} __attribute__((packed)) Ranging_Message_t;   // 20 + 12 byte * MAX_NEIGHBOR_SIZE
 
 /* Ranging Message With RX Timestamp, used in RX Queue */
 typedef struct {

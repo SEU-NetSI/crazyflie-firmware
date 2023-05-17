@@ -28,40 +28,48 @@ static int floodingSeqNumber = 1;
 
 uint16_t floodingCheckTable[FLOODING_CHECK_TABLE_SIZE] = {0};
 
-void floodingRxCallback(void *parameters) {
+void floodingRxCallback(void *parameters)
+{
   // DEBUG_PRINT("floodingRxCallback \n");
 }
 
-void floodingTxCallback(void *parameters) {
+void floodingTxCallback(void *parameters)
+{
   // DEBUG_PRINT("floodingTxCallback \n");
 }
 
-static void uwbFloodingTxTask(void *parameters) {
+static void uwbFloodingTxTask(void *parameters)
+{
   systemWaitStart();
 
   UWB_Packet_t txPacketCache;
   txPacketCache.header.type = FLOODING;
 
-  while (true) {
-    printFloodingTopologyTableSet(&floodingTopologyTableSet);
-    int msgLen = generateFloodingMessage((Flooding_Message_t *) &txPacketCache.payload);
+  while (true)
+  {
+    // printFloodingTopologyTableSet(&floodingTopologyTableSet);
+    int msgLen = generateFloodingMessage((Flooding_Message_t *)&txPacketCache.payload);
     txPacketCache.header.length = sizeof(Packet_Header_t) + msgLen;
     uwbSendPacketBlock(&txPacketCache);
     /* jitter */
-    int jitter = (int) (rand() / (float) RAND_MAX * 9) - 4;
+    int jitter = (int)(rand() / (float)RAND_MAX * 9) - 4;
     vTaskDelay(FLOODING_INTERVAL + M2T(jitter));
   }
 }
 
-static void uwbFloodingRxTask(void *parameters) {
+static void uwbFloodingRxTask(void *parameters)
+{
   systemWaitStart();
 
   UWB_Packet_t rxPacketCache;
 
-  while (true) {
-    if (xQueueReceive(rxQueue, &rxPacketCache, portMAX_DELAY)) {
-      Flooding_Message_t *floodingMessage = (Flooding_Message_t *) &rxPacketCache.payload;
-      if (checkFloodingMessage(floodingMessage)) {
+  while (true)
+  {
+    if (xQueueReceive(rxQueue, &rxPacketCache, portMAX_DELAY))
+    {
+      Flooding_Message_t *floodingMessage = (Flooding_Message_t *)&rxPacketCache.payload;
+      if (checkFloodingMessage(floodingMessage))
+      {
         processFloodingMessage(floodingMessage);
         uwbSendPacketBlock(&rxPacketCache);
       }
@@ -69,7 +77,8 @@ static void uwbFloodingRxTask(void *parameters) {
   }
 }
 
-void floodingInit() {
+void floodingInit()
+{
   MY_UWB_ADDRESS = getUWBAddress();
   rxQueue = xQueueCreate(FLOODING_RX_QUEUE_SIZE, FLOODING_RX_QUEUE_ITEM_SIZE);
   floodingTopologyTableSetInit(&floodingTopologyTableSet);
@@ -86,21 +95,25 @@ void floodingInit() {
               ADHOC_DECK_TASK_PRI, &uwbFloodingRxTaskHandle);
 }
 
-int generateFloodingMessage(Flooding_Message_t *floodingMessage) {
+int generateFloodingMessage(Flooding_Message_t *floodingMessage)
+{
   floodingTopologyTableSetClearExpire(&floodingTopologyTableSet);
 
   int8_t bodyUnitNumber = 0;
   int curSeqNumber = floodingSeqNumber;
   /* generate message body */
   uint16_t addressIndex;
-  for (addressIndex = 0; addressIndex < RANGING_TABLE_SIZE; addressIndex++) {
-    if (bodyUnitNumber >= MAX_BODY_UNIT_NUMBER) {
+  for (addressIndex = 0; addressIndex < RANGING_TABLE_SIZE; addressIndex++)
+  {
+    if (bodyUnitNumber >= MAX_BODY_UNIT_NUMBER)
+    {
       break;
     }
     /* Use distance to judge whether neighbors exist. If the neighbor does not exist,
        distance will be 0 */
     int16_t distance = getDistance(addressIndex);
-    if (distance >= 0) {
+    if (distance >= 0)
+    {
       floodingMessage->bodyUnits[bodyUnitNumber].dstAddress = addressIndex;
       floodingMessage->bodyUnits[bodyUnitNumber].distance = distance;
       floodingTopologyTableSetUpdate(&floodingTopologyTableSet, MY_UWB_ADDRESS,
@@ -120,21 +133,26 @@ int generateFloodingMessage(Flooding_Message_t *floodingMessage) {
   return floodingMessage->header.msgLength;
 }
 
-void processFloodingMessage(Flooding_Message_t *floodingMessage) {
+void processFloodingMessage(Flooding_Message_t *floodingMessage)
+{
   int8_t bodyUnitNumberMax = (floodingMessage->header.msgLength -
-      sizeof(Flooding_Message_Header_t)) / sizeof(Flooding_Body_Unit_t);
-  for (int8_t bodyUnitNumber = 0; bodyUnitNumber < bodyUnitNumberMax; bodyUnitNumber++) {
+                              sizeof(Flooding_Message_Header_t)) /
+                             sizeof(Flooding_Body_Unit_t);
+  for (int8_t bodyUnitNumber = 0; bodyUnitNumber < bodyUnitNumberMax; bodyUnitNumber++)
+  {
     Flooding_Body_Unit_t *bodyUnit = &floodingMessage->bodyUnits[bodyUnitNumber];
     floodingTopologyTableSetUpdate(&floodingTopologyTableSet, floodingMessage->header.srcAddress,
                                    bodyUnit->dstAddress, bodyUnit->distance);
   }
 }
 
-bool checkFloodingMessage(Flooding_Message_t *floodingMessage) {
+bool checkFloodingMessage(Flooding_Message_t *floodingMessage)
+{
   if (floodingMessage == NULL ||
       floodingMessage->header.srcAddress == MY_UWB_ADDRESS ||
       floodingMessage->header.timeToLive == 0 ||
-      floodingMessage->header.msgSequence <= floodingCheckTable[floodingMessage->header.srcAddress]) {
+      floodingMessage->header.msgSequence <= floodingCheckTable[floodingMessage->header.srcAddress])
+  {
     return false;
   }
   floodingMessage->header.timeToLive--;

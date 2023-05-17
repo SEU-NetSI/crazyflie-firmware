@@ -96,9 +96,7 @@
 #include "debug.h"
 #include "cfassert.h"
 
-
 // #define KALMAN_USE_BARO_UPDATE
-
 
 // Semaphore to signal that we got data from the stabilizer loop to process
 static SemaphoreHandle_t runTaskSemaphore;
@@ -107,7 +105,6 @@ static SemaphoreHandle_t runTaskSemaphore;
 // functions called by the stabilizer loop
 static SemaphoreHandle_t dataMutex;
 static StaticSemaphore_t dataMutexBuffer;
-
 
 /**
  * Tuning parameters
@@ -174,6 +171,12 @@ static const bool useBaroUpdate = true;
 #else
 static const bool useBaroUpdate = false;
 #endif
+/* 自己添加*/
+static float swarmVelocityXInWorld;
+static float swarmVelocityYInWorld;
+static float swarmGyroZ;
+static float swarmPositionZ;
+/* 自己添加*/
 
 static void kalmanTask(void* parameters);
 static void updateQueuedMeasurements(const uint32_t nowMs, const bool quadIsFlying);
@@ -247,6 +250,13 @@ static void kalmanTask(void* parameters) {
 
     if (kalmanCoreFinalize(&coreData))
     {
+      /* 自己添加*/
+      swarmVelocityXInWorld = coreData.R[0][0] * coreData.S[KC_STATE_PX] + coreData.R[0][1] * coreData.S[KC_STATE_PY] + coreData.R[0][2] * coreData.S[KC_STATE_PZ];
+      swarmVelocityYInWorld = coreData.R[1][0] * coreData.S[KC_STATE_PX] + coreData.R[1][1] * coreData.S[KC_STATE_PY] + coreData.R[1][2] * coreData.S[KC_STATE_PZ];
+      // swarmGz = atan2f(2*(q[1]*q[2]+q[0]*q[3]) , q[0]*q[0] + q[1]*q[1] - q[2]*q[2] - q[3]*q[3]);
+      swarmGyroZ = gyroLatest.z * DEG_TO_RAD;
+      swarmPositionZ = coreData.S[KC_STATE_Z];
+      /* 自己添加*/
       STATS_CNT_RATE_EVENT(&finalizeCounter);
     }
 
@@ -377,6 +387,25 @@ void estimatorKalmanGetEstimatedPos(point_t* pos) {
 void estimatorKalmanGetEstimatedRot(float * rotationMatrix) {
   memcpy(rotationMatrix, coreData.R, 9*sizeof(float));
 }
+
+/*自己添加*/
+void estimatorKalmanGetSwarmInfo(short *vx, short *vy, float *gyroZ, uint16_t *height)
+{
+  *vx = (short)(swarmVelocityXInWorld * 100);
+  *vy = (short)(swarmVelocityYInWorld * 100);
+  *gyroZ = swarmGyroZ;
+  *height = (uint16_t)(swarmPositionZ * 100);
+}
+/*自己添加*/
+
+/*自己添加*/
+LOG_GROUP_START(swarmstate)
+LOG_ADD(LOG_FLOAT, swaVx, &swarmVelocityXInWorld)
+LOG_ADD(LOG_FLOAT, swaVy, &swarmVelocityYInWorld)
+LOG_ADD(LOG_FLOAT, swaGz, &swarmGyroZ)
+LOG_ADD(LOG_FLOAT, swah, &swarmPositionZ)
+LOG_GROUP_STOP(swarmstate)
+/*自己添加*/
 
 /**
  * Variables and results from the Extended Kalman Filter

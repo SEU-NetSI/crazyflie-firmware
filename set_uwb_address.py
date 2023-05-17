@@ -7,7 +7,7 @@ from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 
 # Only output errors from the logging framework
 logging.basicConfig(level=logging.ERROR)
-uri = 'usb://0'
+uri = 'radio://0/80/2M'
 
 
 def get_persistent_state(cf, complete_param_name):

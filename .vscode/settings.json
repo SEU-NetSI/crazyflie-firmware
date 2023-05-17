@@ -5,6 +5,17 @@
         "**/bower_components": true
     },
     "files.associations": {
-        "bootloader.h": "c"
-    }
+        "*.cjson": "jsonc",
+        "*.wxss": "css",
+        "*.wxs": "javascript",
+        "bootloader.h": "c",
+        "debug.h": "c",
+        "swarm_ranging.h": "c",
+        "estimator_kalman.h": "c",
+        "relative_localization.h": "c",
+        "iterator": "c",
+        "ranging_struct.h": "c",
+        "adhocdeck.h": "c"
+    },
+    "editor.fontSize": 18
 }
