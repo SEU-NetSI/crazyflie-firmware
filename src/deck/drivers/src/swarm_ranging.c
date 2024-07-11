@@ -44,10 +44,10 @@ static TimerHandle_t statisticTimer;
 
 void printStasticCallback(TimerHandle_t timer)
 {
-  DEBUG_PRINT("recvnum:%d,compute1num:%d,compute2num:%d\n",
-              statistic[1].recvnum,
-              statistic[1].compute1num,
-              statistic[1].compute2num);
+  // DEBUG_PRINT("recvnum:%d,compute1num:%d,compute2num:%d\n",
+  //             statistic[1].recvnum,
+  //             statistic[1].compute1num,
+  //             statistic[1].compute2num);
 }
 
 void statisticInit()
@@ -125,7 +125,7 @@ static void uwbRangingTxTask(void *parameters)
     int msgLen = generateRangingMessage((Ranging_Message_t *)&txPacketCache.payload);
     txPacketCache.header.length = sizeof(Packet_Header_t) + msgLen;
     uwbSendPacketBlock(&txPacketCache);
-    int delayms = 60;
+    int delayms = 30+rand()%61;
     vTaskDelay(delayms);
   }
 }
