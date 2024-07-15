@@ -5,7 +5,7 @@
 #include "adhocdeck.h"
 #include "semphr.h"
 
-//#define RANGING_DEBUG_ENABLE
+// #define RANGING_DEBUG_ENABLE
 
 /* Function Switch */
 //#define ENABLE_BUS_BOARDING_SCHEME
@@ -15,12 +15,12 @@
 #endif
 
 /* Ranging Constants */
-#define RANGING_PERIOD 200 // default in 200ms
+#define RANGING_PERIOD 60 // default in 200ms
 #define RANGING_PERIOD_MIN 50 // default 50ms
 #define RANGING_PERIOD_MAX 500 // default 500ms
 
 /* Queue Constants */
-#define RANGING_RX_QUEUE_SIZE 5
+#define RANGING_RX_QUEUE_SIZE 10
 #define RANGING_RX_QUEUE_ITEM_SIZE sizeof(Ranging_Message_With_Timestamp_t)
 
 /* Ranging Struct Constants */
@@ -28,10 +28,11 @@
 #define RANGING_MESSAGE_PAYLOAD_SIZE_MAX (RANGING_MESSAGE_SIZE_MAX - sizeof(Ranging_Message_Header_t))
 #define RANGING_MAX_Tr_UNIT 3
 #define RANGING_MAX_BODY_UNIT (RANGING_MESSAGE_PAYLOAD_SIZE_MAX / sizeof(Body_Unit_t))
-#define RANGING_TABLE_SIZE_MAX 20 // default up to 20 one-hop neighbors
+#define RANGING_TABLE_SIZE_MAX 32 // default up to 20 one-hop neighbors
 #define RANGING_TABLE_HOLD_TIME (6 * RANGING_PERIOD_MAX)
-#define Tr_Rr_BUFFER_POOL_SIZE 3
-#define Tf_BUFFER_POOL_SIZE (2 * RANGING_PERIOD_MAX / RANGING_PERIOD_MIN)
+#define Tr_Rr_BUFFER_POOL_SIZE 5
+// #define Tf_BUFFER_POOL_SIZE (2 * RANGING_PERIOD_MAX / RANGING_PERIOD_MIN)
+#define Tf_BUFFER_POOL_SIZE 5
 
 /* Topology Sensing */
 #define NEIGHBOR_ADDRESS_MAX 32
@@ -46,23 +47,42 @@ typedef struct {
 } __attribute__((packed)) Timestamp_Tuple_t; // 10 byte
 
 /* Body Unit */
-typedef struct {
+// typedef struct {
+//   struct {
+//     uint8_t MPR: 1;
+//     uint8_t RESERVED: 7;
+//   } flags; // 1 byte
+//   uint16_t address; // 2 byte
+//   Timestamp_Tuple_t timestamp; // 10 byte
+// } __attribute__((packed)) Body_Unit_t; // 13 byte
+typedef union{
   struct {
-    uint8_t MPR: 1;
-    uint8_t RESERVED: 7;
-  } flags; // 1 byte
-  uint16_t address; // 2 byte
-  Timestamp_Tuple_t timestamp; // 10 byte
-} __attribute__((packed)) Body_Unit_t; // 13 byte
+    uint8_t rawtime[5];//低5位字节
+    uint8_t address; //最高1位字节
+    uint16_t seqNumber; //最高2-3位字节
+  }__attribute__((packed));
+  dwTime_t timestamp; // 8 byte, 后5字节有用，高3字节未使用
+} Body_Unit_t;
+
+
+typedef union{
+  struct {
+    uint8_t rawtime[5];//低5位字节
+    uint8_t address; //最高1位字节
+    uint16_t seqNumber; //最高2-3位字节
+  }__attribute__((packed));
+  dwTime_t timestamp; // 8 byte, 后5字节有用，高3字节未使用
+} Timestamp_Tuple_t_2;
 
 /* Ranging Message Header*/
 typedef struct {
   uint16_t srcAddress; // 2 byte
   uint16_t msgSequence; // 2 byte
-  Timestamp_Tuple_t lastTxTimestamps[RANGING_MAX_Tr_UNIT]; // 10 byte * MAX_Tr_UNIT
-  short velocity; // 2 byte cm/s
+  Timestamp_Tuple_t_2 lastTxTimestamps[RANGING_MAX_Tr_UNIT]; // 10 byte * MAX_Tr_UNIT
+  // short velocity; // 2 byte cm/s
   uint16_t msgLength; // 2 byte
   uint16_t filter; // 16 bits bloom filter
+
 } __attribute__((packed)) Ranging_Message_Header_t; // 10 byte + 10 byte * MAX_Tr_UNIT
 
 /* Ranging Message */
@@ -114,7 +134,14 @@ typedef enum {
   +------+------+------+------+------+
 */
 typedef struct {
+  Timestamp_Tuple_t Rx;
+  Timestamp_Tuple_t Tx;
+}Ranging_Table_Tx_Rx_History_t;
+
+typedef struct {
   uint16_t neighborAddress;
+
+  Ranging_Table_Tx_Rx_History_t TxRxHistory;
 
   Timestamp_Tuple_t Rp;
   Timestamp_Tuple_t Tp;
@@ -170,21 +197,21 @@ typedef struct {
 /* Ranging Operations */
 void rangingInit();
 int16_t getDistance(UWB_Address_t neighborAddress);
-void setDistance(UWB_Address_t neighborAddress, int16_t distance);
+void setDistance(UWB_Address_t neighborAddress, int16_t distance,uint8_t source);
 
 /* Tr_Rr Buffer Operations */
 void rangingTableBufferInit(Ranging_Table_Tr_Rr_Buffer_t *rangingTableBuffer);
 void rangingTableBufferUpdate(Ranging_Table_Tr_Rr_Buffer_t *rangingTableBuffer,
-                              Timestamp_Tuple_t Tr,
+                              Timestamp_Tuple_t_2 Tr,
                               Timestamp_Tuple_t Rr);
 Ranging_Table_Tr_Rr_Candidate_t rangingTableBufferGetCandidate(Ranging_Table_Tr_Rr_Buffer_t *rangingTableBuffer,
-                                                               Timestamp_Tuple_t Tf);
+                                                               Timestamp_Tuple_t Tf,Timestamp_Tuple_t Tp);
 
 /* Tf Buffer Operations */
 void updateTfBuffer(Timestamp_Tuple_t timestamp);
 Timestamp_Tuple_t findTfBySeqNumber(uint16_t seqNumber);
 Timestamp_Tuple_t getLatestTxTimestamp();
-void getLatestNTxTimestamps(Timestamp_Tuple_t *timestamps, int n);
+void getLatestNTxTimestamps(Timestamp_Tuple_t_2 *timestamps, int n);
 
 /* Ranging Table Operations */
 Ranging_Table_Set_t *getGlobalRangingTableSet();
