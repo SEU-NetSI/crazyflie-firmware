@@ -26,4 +26,7 @@ obj-$(CONFIG_DECK_ADHOC)         += aodv.o
 obj-$(CONFIG_DECK_ADHOC)         += olsr.o
 obj-$(CONFIG_DECK_ADHOC)         += raft.o
 obj-$(CONFIG_DECK_ADHOC)         += flooding_struct.o
+obj-$(CONFIG_DECK_ADHOC)         += relative_localization.o
+obj-$(CONFIG_DECK_ADHOC)         += relative_control.o
 obj-$(CONFIG_DECK_ADHOC)         += flooding.o
+obj-$(CONFIG_DECK_ADHOC)         += sniffer.o

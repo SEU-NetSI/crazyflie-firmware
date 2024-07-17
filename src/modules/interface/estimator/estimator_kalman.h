@@ -69,3 +69,6 @@ void estimatorKalmanGetEstimatedPos(point_t* pos);
  * Copies 9 floats representing the current state rotation matrix
  */
 void estimatorKalmanGetEstimatedRot(float * rotationMatrix);
+/*自己添加*/
+void estimatorKalmanGetSwarmInfo(short *vx, short *vy, float *gyroZ, uint16_t *height);
+/*自己添加*/

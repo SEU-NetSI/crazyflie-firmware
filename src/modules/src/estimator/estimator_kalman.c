@@ -182,6 +182,11 @@ static const bool useBaroUpdate = false;
 static void kalmanTask(void* parameters);
 static void updateQueuedMeasurements(const uint32_t nowMs, const bool quadIsFlying);
 
+
+static float swarmVelocityXInWorld;
+static float swarmVelocityYInWorld;
+static float swarmGyroZ;
+static float swarmPositionZ;
 STATIC_MEM_TASK_ALLOC_STACK_NO_DMA_CCM_SAFE(kalmanTask, KALMAN_TASK_STACKSIZE);
 
 // --------------------------------------------------
@@ -251,6 +256,13 @@ static void kalmanTask(void* parameters) {
 
     if (kalmanCoreFinalize(&coreData))
     {
+       /* 自己添加*/
+      swarmVelocityXInWorld = coreData.R[0][0] * coreData.S[KC_STATE_PX] + coreData.R[0][1] * coreData.S[KC_STATE_PY] + coreData.R[0][2] * coreData.S[KC_STATE_PZ];
+      swarmVelocityYInWorld = coreData.R[1][0] * coreData.S[KC_STATE_PX] + coreData.R[1][1] * coreData.S[KC_STATE_PY] + coreData.R[1][2] * coreData.S[KC_STATE_PZ];
+      // swarmGz = atan2f(2*(q[1]*q[2]+q[0]*q[3]) , q[0]*q[0] + q[1]*q[1] - q[2]*q[2] - q[3]*q[3]);
+      swarmGyroZ = gyroLatest.z * DEG_TO_RAD;
+      swarmPositionZ = coreData.S[KC_STATE_Z];
+      /* 自己添加*/
       STATS_CNT_RATE_EVENT(&finalizeCounter);
     }
 
@@ -381,6 +393,14 @@ void estimatorKalmanGetEstimatedPos(point_t* pos) {
 
 void estimatorKalmanGetEstimatedRot(float * rotationMatrix) {
   memcpy(rotationMatrix, coreData.R, 9*sizeof(float));
+}
+
+void estimatorKalmanGetSwarmInfo(short *vx, short *vy, float *gyroZ, uint16_t *height)
+{
+  *vx = (short)(swarmVelocityXInWorld * 100);
+  *vy = (short)(swarmVelocityYInWorld * 100);
+  *gyroZ = swarmGyroZ;
+  *height = (uint16_t)(swarmPositionZ * 100);
 }
 
 /**
