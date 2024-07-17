@@ -174,6 +174,9 @@ void predict_period_in_rx(int rx_buffer_index)
 void predict_period_in_tx_2(int TfBufferIndex)
 {
 
+  if (temp_delay!=0){
+    return;
+  }
   bool temp_control[2] = {0, 0};
 
   for (int i = 0; i < NEIGHBOR_ADDRESS_MAX; i++)
