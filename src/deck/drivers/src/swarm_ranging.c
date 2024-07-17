@@ -189,7 +189,7 @@ void predict_period_in_tx_2(int TfBufferIndex)
       */
       if (((TfBuffer[TfBufferIndex].timestamp.full - rx_buffer[i].timestamp.full) % UWB_MAX_TIMESTAMP < (uint64_t)(RANGING_PERIOD / (DWT_TIME_UNITS * 1000))) && (TfBuffer[TfBufferIndex].timestamp.full % UWB_MAX_TIMESTAMP) > (rx_buffer[i].timestamp.full % UWB_MAX_TIMESTAMP))
       {
-        if ((TfBuffer[TfBufferIndex].timestamp.full - rx_buffer[i].timestamp.full) % UWB_MAX_TIMESTAMP < (uint64_t)(RANGING_PERIOD / rangingTableSet.size / (DWT_TIME_UNITS * 1000)))
+        if ((TfBuffer[TfBufferIndex].timestamp.full - rx_buffer[i].timestamp.full) % UWB_MAX_TIMESTAMP < (uint64_t)(RANGING_PERIOD*3/2 / rangingTableSet.size / (DWT_TIME_UNITS * 1000)))
         {
           temp_control[0] = 1;
         }
@@ -197,7 +197,7 @@ void predict_period_in_tx_2(int TfBufferIndex)
 
       if (((TfBuffer[TfBufferIndex].timestamp.full - rx_buffer[i].timestamp.full) % UWB_MAX_TIMESTAMP < (uint64_t)(RANGING_PERIOD / (DWT_TIME_UNITS * 1000))) && (TfBuffer[TfBufferIndex].timestamp.full % UWB_MAX_TIMESTAMP) > (rx_buffer[i].timestamp.full % UWB_MAX_TIMESTAMP))
       {
-        if ((uint64_t)(RANGING_PERIOD / (DWT_TIME_UNITS * 1000) - TfBuffer[TfBufferIndex].timestamp.full + rx_buffer[i].timestamp.full) % UWB_MAX_TIMESTAMP < (uint64_t)(RANGING_PERIOD / rangingTableSet.size / (DWT_TIME_UNITS * 1000)))
+        if ((uint64_t)(RANGING_PERIOD / (DWT_TIME_UNITS * 1000) - TfBuffer[TfBufferIndex].timestamp.full + rx_buffer[i].timestamp.full) % UWB_MAX_TIMESTAMP < (uint64_t)(RANGING_PERIOD*3/2 / rangingTableSet.size / (DWT_TIME_UNITS * 1000)))
         {
           temp_control[1] = 1;
         }
