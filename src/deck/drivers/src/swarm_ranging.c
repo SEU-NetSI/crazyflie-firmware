@@ -132,7 +132,7 @@ void setDistance(UWB_Address_t neighborAddress, int16_t distance, uint8_t source
 #ifdef ENABLE_OPTIMAL_RANGING_SCHEDULE
 int rx_buffer_index = 0;
 static Timestamp_Tuple_t rx_buffer[NEIGHBOR_ADDRESS_MAX + 1];
-#define SAFETY_DISTANCE_MIN 1
+#define SAFETY_DISTANCE_MIN 2
 int8_t temp_delay = 0;
 void predict_period_in_rx(int rx_buffer_index)
 {
