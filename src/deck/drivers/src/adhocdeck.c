@@ -126,6 +126,7 @@ static void rxTimeoutCallback() {
 
 static void rxErrorCallback() {
   DEBUG_PRINT("rxErrorCallback: some error occurs when rx\n");
+  dwt_rxenable(DWT_START_RX_IMMEDIATE);
 }
 
 uint16_t uwbGetAddress() {

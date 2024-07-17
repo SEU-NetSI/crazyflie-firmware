@@ -79,7 +79,7 @@ void snifferInit() {
   listener.txCb = NULL;
   uwbRegisterListener(&listener);
 
-  xTaskCreate(snifferTask, "ADHOC_DECK_SNIFFER_TASK_NAME", 4 * configMINIMAL_STACK_SIZE, NULL,
+  xTaskCreate(snifferTask, "ADHOC_DECK_SNIFFER_TASK_NAME", 5 * configMINIMAL_STACK_SIZE, NULL,
               ADHOC_DECK_TASK_PRI, &snifferTaskHandle);
 }
 
