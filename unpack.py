@@ -1,6 +1,5 @@
 import pickle
 import struct
-
 import pandas as pd
 import numpy as np
 import sys
@@ -23,12 +22,8 @@ def unpack_bindata(row: pd.DataFrame):
         print('---')
 
 
-# with open('newdata/2024-07-17-21-24-17-v2.pkl', 'rb') as file:
-# with open('newdata/2024-07-17-21-42-01-v3.pkl', 'rb') as file:
-# with open('newdata/2024-07-17-23-37-43-slot-v5.pkl', 'rb') as file:
-with open('newdata/2024-07-18-21-17-25.pkl', 'rb') as file:
 
-    
+with open('2024-07-18-22-17-41-v5.pkl', 'rb') as file:
     data = pickle.load(file)
 
 data = pd.DataFrame(data)
