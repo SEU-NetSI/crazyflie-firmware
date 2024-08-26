@@ -378,9 +378,7 @@ static const MotorPerifDef MOTORS_PA1_TIM2_CH2_BRUSHLESS_OD =
     .gpioPinSource = GPIO_PinSource1,
     .gpioOType     = GPIO_OType_OD,
     .gpioAF        = GPIO_AF_TIM2,
-    .gpioPowerswitchPerif = RCC_AHB1Periph_GPIOA,
-    .gpioPowerswitchPort  = GPIOA,
-    .gpioPowerswitchPin   = GPIO_Pin_0,
+    .hasPC15ESCReset = true,
     .timPerif      = RCC_APB1Periph_TIM2,
     .tim           = TIM2,
     .timPolarity   = TIM_OCPolarity_High,
@@ -408,9 +406,7 @@ static const MotorPerifDef MOTORS_PB11_TIM2_CH4_BRUSHLESS_OD =
     .gpioPinSource = GPIO_PinSource11,
     .gpioOType     = GPIO_OType_OD,
     .gpioAF        = GPIO_AF_TIM2,
-    .gpioPowerswitchPerif = RCC_AHB1Periph_GPIOB,
-    .gpioPowerswitchPort  = GPIOB,
-    .gpioPowerswitchPin   = GPIO_Pin_12,
+    .hasPC15ESCReset = true,
     .timPerif      = RCC_APB1Periph_TIM2,
     .tim           = TIM2,
     .timPolarity   = TIM_OCPolarity_High,
@@ -438,9 +434,7 @@ static const MotorPerifDef MOTORS_PB11_TIM2_CH4_BRUSHLESS_OD =
     .gpioPinSource = GPIO_PinSource15,
     .gpioOType     = GPIO_OType_OD,
     .gpioAF        = GPIO_AF_TIM2,
-    .gpioPowerswitchPerif = RCC_AHB1Periph_GPIOC,
-    .gpioPowerswitchPort  = GPIOC,
-    .gpioPowerswitchPin   = GPIO_Pin_8,
+    .hasPC15ESCReset = true,
     .timPerif      = RCC_APB1Periph_TIM2,
     .tim           = TIM2,
     .timPolarity   = TIM_OCPolarity_High,
@@ -469,9 +463,7 @@ static const MotorPerifDef MOTORS_PB10_TIM2_CH3_BRUSHLESS_OD =
     .gpioPinSource = GPIO_PinSource10,
     .gpioOType     = GPIO_OType_OD,
     .gpioAF        = GPIO_AF_TIM2,
-    .gpioPowerswitchPerif = RCC_AHB1Periph_GPIOC,
-    .gpioPowerswitchPort  = GPIOC,
-    .gpioPowerswitchPin   = GPIO_Pin_15,
+    .hasPC15ESCReset = true,
     .timPerif      = RCC_APB1Periph_TIM2,
     .tim           = TIM2,
     .timPolarity   = TIM_OCPolarity_High,
@@ -623,7 +615,7 @@ static const MotorPerifDef MOTORS_PB5_TIM3_CH2_BRUSHLESS_OD =
 };
 
 // Deck IO3, PB4, TIM3_CH1
-static const MotorPerifDef MOTORS_PB4_TIM2_CH1_BRUSHLESS_OD =
+static const MotorPerifDef MOTORS_PB4_TIM3_CH1_BRUSHLESS_OD =
 {
     .drvType       = BRUSHLESS,
     .gpioPerif     = RCC_AHB1Periph_GPIOB,
@@ -743,7 +735,7 @@ const MotorPerifDef* motorMapDefaultBrushed[NBR_OF_MOTORS] =
 const MotorPerifDef* motorMapBigQuadDeck[NBR_OF_MOTORS] =
 {
   &MOTORS_PA2_TIM2_CH3_BRUSHLESS_OD,
-  &MOTORS_PB4_TIM2_CH1_BRUSHLESS_OD,
+  &MOTORS_PB4_TIM3_CH1_BRUSHLESS_OD,
   &MOTORS_PB5_TIM3_CH2_BRUSHLESS_OD,
   &MOTORS_PA3_TIM2_CH4_BRUSHLESS_OD
 };
@@ -805,3 +797,32 @@ const MotorPerifDef* motorMapCF21Brushless[NBR_OF_MOTORS] =
     &MOTORS_PB10_TIM2_CH3_BRUSHLESS_OD
 };
 
+/**
+ * Servo mapped to the Bigquad CPPM (MOSI) port
+ */
+const MotorPerifDef* servoMapMOSI = &MOTORS_PA7_TIM14_CH1_BRUSHLESS_OD;
+
+/**
+ * Servo mapped to the Bigquad M1 / TX2 port
+ */
+const MotorPerifDef* servoMapTX2 = &MOTORS_PA2_TIM5_CH3_BRUSHLESS_OD;
+
+/**
+ * Servo mapped to the Bigquad M3 / IO2 port
+ */
+const MotorPerifDef* servoMapIO2 = &MOTORS_PB5_TIM3_CH2_BRUSHLESS_OD;
+
+/**
+ * Servo mapped to the Bigquad M2 / IO3 port
+ */
+const MotorPerifDef* servoMapIO3 = &MOTORS_PB4_TIM3_CH1_BRUSHLESS_OD;
+
+/**
+ * Servo mapped to the Bigquad M4 / RX2 port
+ */
+const MotorPerifDef* servoMapRX2 = &MOTORS_PA3_TIM5_CH4_BRUSHLESS_OD;
+
+/**
+ * Servo mapped to IO1 port
+ */
+const MotorPerifDef* servoMapIO1 = &MOTORS_PB8_TIM4_CH3_BRUSHLESS_OD;

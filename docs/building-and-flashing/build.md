@@ -171,6 +171,7 @@ bindings_python : Build the python bindings for firmware wrappers
 menuconfig      : Open up a terminal user interface to set configuration options
 defconfig       : Generate a `.config` with the default configuration options
 cf2_defconfig   : Merge configuration options from `configs/cf2_defconfig` with default
+cf21bl_defconfig: Merge configuration options from `configs/cf21bl_defconfig` with default
 tag_defconfig   : Merge configuration options from `configs/tag_defconfig` with default
 bolt_defconfig   : Merge configuration options from `configs/bolt_defconfig` with default
 allyesconfig    : Generate a `.config` with the all configuration options enabled
@@ -209,7 +210,7 @@ Warning: if multiple Crazyflies within range are in bootloader mode the result i
 #### Automatically enter bootloader mode
 * Make sure the Crazyflie is on
 * In your terminal, run `CLOAD_CMDS="-w [CRAZYFLIE_URI]" make cload`
-* or run `cfloader flash cf2.bin stm32-fw -w [CRAZYFLIE_URI]`
+* or run `cfloader flash build/cf2.bin stm32-fw -w [CRAZYFLIE_URI]`
 with [CRAZYFLIE_URI] being the uri of the crazyflie.
 
 It will connect to the Crazyflie with the specified address, put it in bootloader mode and flash the binary. This method is suitable for classroom situations.

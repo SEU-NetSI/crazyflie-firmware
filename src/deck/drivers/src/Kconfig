@@ -390,6 +390,37 @@ config DECK_OA
     help
         Codename: Obstacle Avoidance driver, obsolete deck.
 
+config DECK_SERVO
+    bool "Support the servo deck (prototype/via BigQuad deck)"
+    default n
+    help
+      Servo PWM driver.
+
+choice
+    prompt "Servo pin"
+    depends on DECK_SERVO
+    default DECK_SERVO_USE_TX2
+
+    config DECK_SERVO_USE_TX2
+        bool "PA2/TX2"
+    
+    config DECK_SERVO_USE_RX2
+        bool "PA3/RX2"
+
+    config DECK_SERVO_USE_IO1
+        bool "PB8/IO_1"
+
+    config DECK_SERVO_USE_IO2
+        bool "PB5/IO_2"
+
+    config DECK_SERVO_USE_IO3
+        bool "PB4/IO_3"
+
+    config DECK_SERVO_USE_MOSI
+        bool "PA7/MOSI"
+
+endchoice
+
 config DECK_USD
     bool "Support the Micro SD card deck"
     default n
@@ -446,25 +477,21 @@ config DECK_CPX_HOST_ON_UART2
       deck attached (i.e there will be no 1-wire memory to automatically detect
       and start the driver).
 
-config DECK_ADHOC
-  bool "Support the Adhoc deck"
-  default y
-  help
-      The Adhoc deck is used for ranging, networking and communication within the
-      swarm, based on the DW3000 UWB chip.
-
-  config DECK_ADHOCDECK_USE_ALT_PINS
-  bool "adhoc deck alternative IRQ and RESET pins"
-  default name
-  depends on DECK_ADHOC
-  help
-       ADHOC deck alternative IRQ and RESET pins(IO_2, IO_4) instead of
-       default (RX1, TX1), leaving UART1 free for use.
-
-  config DECK_ADHOCDECK_USE_UART2_PINS
-  bool "adhoc deck use UART2 (TX2, RX2) pins"
-  default name
-  depends on DECK_ADHOC
-  help
-       ADHOC deck alternative IRQ and RESET pins(TX2, RX2) instead of
-       default (RX1, TX1).
+config DECK_ACS37800
+    bool "Support for the power measurement deck"
+    default n
+    help
+        Enables the support for the ACS37800 chip that can measure power/current/voltage.
+      
+config DECK_RPM
+    bool "Support the rpm deck"
+    default y
+    help
+        Enables the rpm deck that can be usfull in testing.
+      
+config DECK_LOADCELL
+    bool "Support for loadcell NAU7802"
+    default n
+    help
+        Enables the support for the NAU7802 loadcell.
+      
