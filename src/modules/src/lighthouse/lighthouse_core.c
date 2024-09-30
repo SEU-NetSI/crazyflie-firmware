@@ -331,11 +331,11 @@ bool findOtherBaseStation(const pulseProcessorResult_t* angles, const int baseSt
 //     estimator as pre-calculated.
 // 1 = Sweep angles pushed into the estimator. Yaw error calculated outside the estimator
 //     and pushed to the estimator as a pre-calculated value.
-#ifdef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
+// #ifdef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
 static uint8_t estimationMethod = 0;
-#else
-static uint8_t estimationMethod = 1;
-#endif
+// #else
+// static uint8_t estimationMethod = 1;
+// #endif
 
 
 static void usePulseResultCrossingBeams(pulseProcessor_t *appState, pulseProcessorResult_t* angles, int baseStation) {

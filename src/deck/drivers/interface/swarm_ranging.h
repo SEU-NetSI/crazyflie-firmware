@@ -5,12 +5,12 @@
 #include "adhocdeck.h"
 #include "semphr.h"
 
-#define RANGING_DEBUG_ENABLE
+// #define RANGING_DEBUG_ENABLE
 
 /* Function Switch */
 //#define ENABLE_BUS_BOARDING_SCHEME
 //#define ENABLE_DYNAMIC_RANGING_PERIOD
-#define ENABLE_OPTIMAL_RANGING_SCHEDULE
+// #define ENABLE_OPTIMAL_RANGING_SCHEDULE
 #ifdef ENABLE_DYNAMIC_RANGING_PERIOD
   #define DYNAMIC_RANGING_COEFFICIENT 1
 #endif
@@ -27,13 +27,13 @@
 /* Ranging Struct Constants */
 #define RANGING_MESSAGE_SIZE_MAX UWB_PAYLOAD_SIZE_MAX
 #define RANGING_MESSAGE_PAYLOAD_SIZE_MAX (RANGING_MESSAGE_SIZE_MAX - sizeof(Ranging_Message_Header_t))
-#define RANGING_MAX_Tr_UNIT 3
+#define RANGING_MAX_Tr_UNIT 5
 #define RANGING_MAX_BODY_UNIT (RANGING_MESSAGE_PAYLOAD_SIZE_MAX / sizeof(Body_Unit_t))
 #define RANGING_TABLE_SIZE_MAX 32 // default up to 20 one-hop neighbors
 #define RANGING_TABLE_HOLD_TIME (6 * RANGING_PERIOD_MAX)
-#define Tr_Rr_BUFFER_POOL_SIZE 5
+#define Tr_Rr_BUFFER_POOL_SIZE 6
 // #define Tf_BUFFER_POOL_SIZE (2 * RANGING_PERIOD_MAX / RANGING_PERIOD_MIN)
-#define Tf_BUFFER_POOL_SIZE 5
+#define Tf_BUFFER_POOL_SIZE 6
 
 /* Topology Sensing */
 #define NEIGHBOR_ADDRESS_MAX 32

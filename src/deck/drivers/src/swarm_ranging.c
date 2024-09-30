@@ -73,6 +73,7 @@ typedef struct Stastistic
   uint16_t recvnum;
   uint16_t compute1num;
   uint16_t compute2num;
+  uint16_t compute3num;
 } Stastistic;
 static Stastistic statistic[NEIGHBOR_ADDRESS_MAX + 1];
 static TimerHandle_t statisticTimer;
@@ -1109,10 +1110,19 @@ static int16_t computeDistance(Timestamp_Tuple_t Tp, Timestamp_Tuple_t Rp,
 
 static int16_t computeDistance2(Timestamp_Tuple_t Tx, Timestamp_Tuple_t Rx,
                                 Timestamp_Tuple_t Tp, Timestamp_Tuple_t Rp,
-                                Timestamp_Tuple_t Tr, Timestamp_Tuple_t Rr)
+                                Timestamp_Tuple_t Tr, Timestamp_Tuple_t Rr,Ranging_Table_t * rangingTable)
 {
+  rangingTable->TxRxHistory.Tx.seqNumber=0;
+  rangingTable->TxRxHistory.Tx.timestamp.full=0;
+  rangingTable->TxRxHistory.Rx.seqNumber=0;
+  rangingTable->TxRxHistory.Rx.timestamp.full=0;
+  statistic[rangingTable->neighborAddress].compute3num++;
   bool isErrorOccurred = false;
   DEBUG_PRINT("Tx:%d,Rx:%d,Tp:%d,Rp:%d,Tr:%d,Rr:%d\n", Tx.seqNumber, Rx.seqNumber, Tp.seqNumber, Rp.seqNumber, Tr.seqNumber, Rr.seqNumber);
+
+  if(Tx.seqNumber==0 || Rx.seqNumber==0){
+    return -1;
+  }
 
   if (Tp.seqNumber != Rp.seqNumber || Tr.seqNumber != Rr.seqNumber || Tx.seqNumber != Rx.seqNumber)
   {
@@ -1260,7 +1270,7 @@ static void S3_RX_NO_Rf(Ranging_Table_t *rangingTable)
   Ranging_Table_Tr_Rr_Candidate_t Tr_Rr_Candidate = rangingTableBufferGetLatest(&rangingTable->TrRrBuffer);
   int16_t distance = computeDistance2(rangingTable->TxRxHistory.Tx, rangingTable->TxRxHistory.Rx,
                                       rangingTable->Tp, rangingTable->Rp,
-                                      Tr_Rr_Candidate.Tr, Tr_Rr_Candidate.Rr);
+                                      Tr_Rr_Candidate.Tr, Tr_Rr_Candidate.Rr,rangingTable);
   if (distance > 0)
   {
     statistic[rangingTable->neighborAddress].compute2num++;
@@ -1292,7 +1302,7 @@ static void S3_RX_Rf(Ranging_Table_t *rangingTable)
   Ranging_Table_Tr_Rr_Candidate_t Tr_Rr_Candidate = rangingTableBufferGetLatest(&rangingTable->TrRrBuffer);
   int16_t distance = computeDistance2(rangingTable->TxRxHistory.Tx, rangingTable->TxRxHistory.Rx,
                                       rangingTable->Tp, rangingTable->Rp,
-                                      Tr_Rr_Candidate.Tr, Tr_Rr_Candidate.Rr);
+                                      Tr_Rr_Candidate.Tr, Tr_Rr_Candidate.Rr,rangingTable);
   if (distance > 0)
   {
     statistic[rangingTable->neighborAddress].compute2num++;
@@ -1338,7 +1348,7 @@ static void S4_RX_NO_Rf(Ranging_Table_t *rangingTable)
   Ranging_Table_Tr_Rr_Candidate_t Tr_Rr_Candidate = rangingTableBufferGetLatest(&rangingTable->TrRrBuffer);
   int16_t distance = computeDistance2(rangingTable->TxRxHistory.Tx, rangingTable->TxRxHistory.Rx,
                                       rangingTable->Tp, rangingTable->Rp,
-                                      Tr_Rr_Candidate.Tr, Tr_Rr_Candidate.Rr);
+                                      Tr_Rr_Candidate.Tr, Tr_Rr_Candidate.Rr,rangingTable);
   if (distance > 0)
   {
     statistic[rangingTable->neighborAddress].compute2num++;
@@ -1793,14 +1803,18 @@ static void uwbRangingRxTask(void *parameters)
   {
     if (xQueueReceive(rxQueue, &rxPacketCache, portMAX_DELAY))
     {
-      xSemaphoreTake(rangingTableSet.mu, portMAX_DELAY);
-      // xSemaphoreTake(neighborSet.mu, portMAX_DELAY);
+      int randnum = rand() % 20;
+      // if (randnum < 17)
+      {
+        xSemaphoreTake(rangingTableSet.mu, portMAX_DELAY);
+        // xSemaphoreTake(neighborSet.mu, portMAX_DELAY);
 
-      processRangingMessage(&rxPacketCache);
-      // topologySensing(&rxPacketCache.rangingMessage);
+        processRangingMessage(&rxPacketCache);
+        // topologySensing(&rxPacketCache.rangingMessage);
 
-      // xSemaphoreGive(neighborSet.mu);
-      xSemaphoreGive(rangingTableSet.mu);
+        // xSemaphoreGive(neighborSet.mu);
+        xSemaphoreGive(rangingTableSet.mu);
+      }
     }
     vTaskDelay(M2T(1));
   }
@@ -1848,6 +1862,7 @@ void rangingTxCallback(void *parameters)
 void rangingInit()
 {
   MY_UWB_ADDRESS = uwbGetAddress();
+  srand(MY_UWB_ADDRESS);
   rxQueue = xQueueCreate(RANGING_RX_QUEUE_SIZE, RANGING_RX_QUEUE_ITEM_SIZE);
   // neighborSetInit(&neighborSet);
   // neighborSetEvictionTimer = xTimerCreate("neighborSetEvictionTimer",
@@ -1923,6 +1938,7 @@ LOG_ADD(LOG_UINT16, recvSeq0, &statistic[0].recvSeq)
 LOG_ADD(LOG_UINT16, recvNum0, &statistic[0].recvnum)
 LOG_ADD(LOG_UINT16, compute1num0, &statistic[0].compute1num)
 LOG_ADD(LOG_UINT16, compute2num0, &statistic[0].compute2num)
+LOG_ADD(LOG_UINT16, compute3num0, &statistic[0].compute3num)
 LOG_ADD(LOG_INT16, dist0, distanceTowards + 0)
 LOG_ADD(LOG_UINT8, distSrc0, distanceSource + 0)
 LOG_ADD(LOG_FLOAT, distReal0, distanceReal + 0)
@@ -1931,6 +1947,7 @@ LOG_ADD(LOG_UINT16, recvSeq1, &statistic[1].recvSeq)
 LOG_ADD(LOG_UINT16, recvNum1, &statistic[1].recvnum)
 LOG_ADD(LOG_UINT16, compute1num1, &statistic[1].compute1num)
 LOG_ADD(LOG_UINT16, compute2num1, &statistic[1].compute2num)
+LOG_ADD(LOG_UINT16, compute3num1, &statistic[1].compute3num)
 LOG_ADD(LOG_INT16, dist1, distanceTowards + 1)
 LOG_ADD(LOG_UINT8, distSrc1, distanceSource + 1)
 LOG_ADD(LOG_FLOAT, distReal1, distanceReal + 1)
@@ -1939,6 +1956,7 @@ LOG_ADD(LOG_UINT16, recvSeq2, &statistic[2].recvSeq)
 LOG_ADD(LOG_UINT16, recvNum2, &statistic[2].recvnum)
 LOG_ADD(LOG_UINT16, compute1num2, &statistic[2].compute1num)
 LOG_ADD(LOG_UINT16, compute2num2, &statistic[2].compute2num)
+LOG_ADD(LOG_UINT16, compute3num2, &statistic[2].compute3num)
 LOG_ADD(LOG_INT16, dist2, distanceTowards + 2)
 LOG_ADD(LOG_UINT8, distSrc2, distanceSource + 2)
 LOG_ADD(LOG_FLOAT, distReal2, distanceReal + 2)
@@ -1947,6 +1965,7 @@ LOG_ADD(LOG_UINT16, recvSeq3, &statistic[3].recvSeq)
 LOG_ADD(LOG_UINT16, recvNum3, &statistic[3].recvnum)
 LOG_ADD(LOG_UINT16, compute1num3, &statistic[3].compute1num)
 LOG_ADD(LOG_UINT16, compute2num3, &statistic[3].compute2num)
+LOG_ADD(LOG_UINT16, compute3num3, &statistic[3].compute3num)
 LOG_ADD(LOG_INT16, dist3, distanceTowards + 3)
 LOG_ADD(LOG_UINT8, distSrc3, distanceSource + 3)
 LOG_ADD(LOG_FLOAT, distReal3, distanceReal + 3)
@@ -1955,6 +1974,7 @@ LOG_ADD(LOG_UINT16, recvSeq4, &statistic[4].recvSeq)
 LOG_ADD(LOG_UINT16, recvNum4, &statistic[4].recvnum)
 LOG_ADD(LOG_UINT16, compute1num4, &statistic[4].compute1num)
 LOG_ADD(LOG_UINT16, compute2num4, &statistic[4].compute2num)
+LOG_ADD(LOG_UINT16, compute3num4, &statistic[4].compute3num)
 LOG_ADD(LOG_INT16, dist4, distanceTowards + 4)
 LOG_ADD(LOG_UINT8, distSrc4, distanceSource + 4)
 LOG_ADD(LOG_FLOAT, distReal4, distanceReal + 4)
@@ -1963,6 +1983,7 @@ LOG_ADD(LOG_UINT16, recvSeq5, &statistic[5].recvSeq)
 LOG_ADD(LOG_UINT16, recvNum5, &statistic[5].recvnum)
 LOG_ADD(LOG_UINT16, compute1num5, &statistic[5].compute1num)
 LOG_ADD(LOG_UINT16, compute2num5, &statistic[5].compute2num)
+LOG_ADD(LOG_UINT16, compute3num5, &statistic[5].compute3num)
 LOG_ADD(LOG_INT16, dist5, distanceTowards + 5)
 LOG_ADD(LOG_UINT8, distSrc5, distanceSource + 5)
 LOG_ADD(LOG_FLOAT, distReal5, distanceReal + 5)
@@ -1971,6 +1992,7 @@ LOG_ADD(LOG_UINT16, recvSeq6, &statistic[6].recvSeq)
 LOG_ADD(LOG_UINT16, recvNum6, &statistic[6].recvnum)
 LOG_ADD(LOG_UINT16, compute1num6, &statistic[6].compute1num)
 LOG_ADD(LOG_UINT16, compute2num6, &statistic[6].compute2num)
+LOG_ADD(LOG_UINT16, compute3num6, &statistic[6].compute3num)
 LOG_ADD(LOG_INT16, dist6, distanceTowards + 6)
 LOG_ADD(LOG_UINT8, distSrc6, distanceSource + 6)
 LOG_ADD(LOG_FLOAT, distReal6, distanceReal + 6)
@@ -1979,6 +2001,7 @@ LOG_ADD(LOG_UINT16, recvSeq7, &statistic[7].recvSeq)
 LOG_ADD(LOG_UINT16, recvNum7, &statistic[7].recvnum)
 LOG_ADD(LOG_UINT16, compute1num7, &statistic[7].compute1num)
 LOG_ADD(LOG_UINT16, compute2num7, &statistic[7].compute2num)
+LOG_ADD(LOG_UINT16, compute3num7, &statistic[7].compute3num)
 LOG_ADD(LOG_INT16, dist7, distanceTowards + 7)
 LOG_ADD(LOG_UINT8, distSrc7, distanceSource + 7)
 LOG_ADD(LOG_FLOAT, distReal7, distanceReal + 7)
