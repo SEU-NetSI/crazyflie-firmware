@@ -5,6 +5,8 @@
         "**/bower_components": true
     },
     "files.associations": {
-        "bootloader.h": "c"
+        "bootloader.h": "c",
+        "freertos.h": "c",
+        "system.h": "c"
     }
 }

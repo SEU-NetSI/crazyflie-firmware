@@ -4,14 +4,24 @@
 #include <stdint.h>
 #include "routing.h"
 
+#define QUIC_DEBUG_ENABLE
+
 /* Tools */
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
+/* Queue Constants */
+#define QUIC_RX_PACKET_QUEUE_SIZE 5
+#define QUIC_RX_PACKET_ITEM_SIZE sizeof(UWB_Packet_t)
+#define QUIC_TX_INITIAL_OR_HANDSHAKE_BUFFER_QUEUE_SIZE 5
+#define QUIC_TX_INITIAL_OR_HANDSHAKE_BUFFER_QUEUE_ITEM_SIZE sizeof(Quic_Initial_or_Handshake_Packet_t)
+#define QUIC_TX_ONE_RTT_BUFFER_QUEUE_SIZE 5
+#define QUIC_TX_ONE_RTT_BUFFER_QUEUE_ITEM_SIZE sizeof(Quic_One_RTT_Packet_t)
+
 /* QUIC Constants */
 #define QUIC_INITIAL_OR_HANDSHAKE_PACKET_PAYLOAD_SIZE_MAX ((ROUTING_DATA_PACKET_PAYLOAD_SIZE_MAX - 14) / 8)
-#define QUIC_1RTT_PACKET_PAYLOAD_SIZE_MAX ((ROUTING_DATA_PACKET_PAYLOAD_SIZE_MAX - 8) / 8)
-#define QUIC_ACK_FRAME_RANGE_SIZE_MAX ((MAX(QUIC_INITIAL_OR_HANDSHAKE_PACKET_PAYLOAD_SIZE_MAX, QUIC_1RTT_PACKET_PAYLOAD_SIZE_MAX) - 18) / 32)
+#define QUIC_ONE_RTT_PACKET_PAYLOAD_SIZE_MAX ((ROUTING_DATA_PACKET_PAYLOAD_SIZE_MAX - 8) / 8)
+#define QUIC_ACK_FRAME_RANGE_SIZE_MAX ((MAX(QUIC_INITIAL_OR_HANDSHAKE_PACKET_PAYLOAD_SIZE_MAX, QUIC_ONE_RTT_PACKET_PAYLOAD_SIZE_MAX) - 18) / 32)
 #define QUIC_PARAMETER_FRAME_VALUE_LENGTH_MAX 8
 #define QUIC_PARAMETER_FRAME_ITEM_SIZE_MAX 10
 
@@ -47,17 +57,17 @@ typedef struct {
     uint8_t reservedBits : 6;
     uint16_t destinationCID;
     uint32_t packetNumber;
-    uint8_t packetPayload[QUIC_1RTT_PACKET_PAYLOAD_SIZE_MAX];
-} __attribute__((packed)) Quic_1RTT_Packet_t;
+    uint8_t packetPayload[QUIC_ONE_RTT_PACKET_PAYLOAD_SIZE_MAX];
+} __attribute__((packed)) Quic_One_RTT_Packet_t;
 
 /* QUIC Frames */
 typedef enum{
     QUIC_FRAME_PADDING,
     QUIC_FRAME_PING,
     QUIC_FRAME_HELLO,
+    QUIC_FRAME_HANDSHAKE_DONE,
     QUIC_FRAME_ACK,
     QUIC_FRAME_ACK_ECN,
-    QUIC_FRAME_HANDSHAKE_DONE,
     QUIC_FRAME_PARAMETER
 } QUIC_FRAME_TYPE;
 
@@ -83,7 +93,18 @@ typedef struct {
 
 typedef struct {
     uint8_t type;
-    Quic_Parameter_Frame_Item_t parameters[QUIC_PARAMETER_FRAME_ITEM_SIZE_MAX]; //TODO
+    Quic_Parameter_Frame_Item_t parameters[QUIC_PARAMETER_FRAME_ITEM_SIZE_MAX]; //TODO: calculate number of parameter size
 } __attribute__((packed)) Quic_Parameter_Frame_t;
+
+/* Quic Server Operations */
+/* Generate Packet Operations */
+int quicGenerateInitialPacket(Quic_Initial_or_Handshake_Packet_t *packet, uint16_t srcCID, uint16_t dstCID);
+/* Generate Frame Operations */
+int quicGenerateOnlyTypeFrame(Quic_Only_Type_Frame_t *frame, QUIC_FRAME_TYPE type);
+/* Interaction Operations */
+void quicInit();
+int quicSendInitialPacket(Quic_Initial_or_Handshake_Packet_t *initialPacket, UWB_Address_t peerAddress);
+
+/* Quic Client Operations */
 
 #endif
