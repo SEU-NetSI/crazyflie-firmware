@@ -7,6 +7,10 @@
     "files.associations": {
         "bootloader.h": "c",
         "freertos.h": "c",
-        "system.h": "c"
+        "system.h": "c",
+        "routing.h": "c",
+        "olsr.h": "c",
+        "timers.h": "c",
+        "random": "c"
     }
 }
