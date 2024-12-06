@@ -21,7 +21,8 @@ typedef enum {
     MAP_TYPE_CHAR,        // char
     MAP_TYPE_FLOAT,       // float
     MAP_TYPE_DOUBLE,      // double
-    MAP_TYPE_QUIC_CONN,   // QUIC_Client_Conn_Item_t
+    MAP_TYPE_QUIC_CLIENT_CONN,   // QUIC_Client_Conn_Item_t
+    MAP_TYPE_QUIC_SERVER_CONN,   // QUIC_Server_Conn_Item_t
 } MAP_TYPE;
 
 typedef enum {

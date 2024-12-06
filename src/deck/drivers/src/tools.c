@@ -88,13 +88,14 @@ static Map_Node_t **mapGetNodeRef(Map_Base_t *map, const char *key) {
 void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketNumber) {
     memset(instance, 0, sizeof(Map_t));
     switch(type) {
-        case MAP_TYPE_VOID_PTR :{instance->typeSize = sizeof(void *);break;}
-        case MAP_TYPE_CHAR_PTR :{instance->typeSize = sizeof(char *);break;}
-        case MAP_TYPE_INT      :{instance->typeSize = sizeof(int);break;}
-        case MAP_TYPE_CHAR     :{instance->typeSize = sizeof(char);break;}
-        case MAP_TYPE_FLOAT    :{instance->typeSize = sizeof(float);break;}
-        case MAP_TYPE_DOUBLE   :{instance->typeSize = sizeof(double);break;}
-        case MAP_TYPE_QUIC_CONN:{instance->typeSize = sizeof(QUIC_Client_Conn_Item_t);break;}
+        case MAP_TYPE_VOID_PTR        :{instance->typeSize = sizeof(void *);break;}
+        case MAP_TYPE_CHAR_PTR        :{instance->typeSize = sizeof(char *);break;}
+        case MAP_TYPE_INT             :{instance->typeSize = sizeof(int);break;}
+        case MAP_TYPE_CHAR            :{instance->typeSize = sizeof(char);break;}
+        case MAP_TYPE_FLOAT           :{instance->typeSize = sizeof(float);break;}
+        case MAP_TYPE_DOUBLE          :{instance->typeSize = sizeof(double);break;}
+        case MAP_TYPE_QUIC_CLIENT_CONN:{instance->typeSize = sizeof(QUIC_Client_Conn_Item_t);break;}
+        case MAP_TYPE_QUIC_SERVER_CONN:{instance->typeSize = sizeof(QUIC_Server_Conn_Item_t);break;}
         default:break;
     }
     instance->isCpyAddr = isCpyAddr;
