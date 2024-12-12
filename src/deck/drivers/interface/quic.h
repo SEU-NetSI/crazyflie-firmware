@@ -2,7 +2,7 @@
 #define __QUIC_H__
 
 #include <stdint.h>
-#include <tools.h>
+#include <quicTools.h>
 #include "routing.h"
 
 #define QUIC_DEBUG_ENABLE
@@ -14,10 +14,6 @@
 /* Queue Constants */
 #define QUIC_RX_PACKET_QUEUE_SIZE 5
 #define QUIC_RX_PACKET_ITEM_SIZE sizeof(UWB_Packet_t)
-#define QUIC_TX_LONG_BUFFER_QUEUE_SIZE 5
-#define QUIC_TX_LONG_BUFFER_QUEUE_ITEM_SIZE sizeof(Quic_Long_Packet_t)
-#define QUIC_TX_ONE_RTT_BUFFER_QUEUE_SIZE 5
-#define QUIC_TX_ONE_RTT_BUFFER_QUEUE_ITEM_SIZE sizeof(Quic_One_RTT_Packet_t)
 
 /* QUIC Constants */
 #define QUIC_LONG_PACKET_PAYLOAD_SIZE_MAX (ROUTING_DATA_PACKET_PAYLOAD_SIZE_MAX - 14)
@@ -233,10 +229,10 @@ int quicProcessInitialPacket(Quic_Long_Packet_t *initialPacket, UWB_Address_t pe
 int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, uint16_t srcConnId, uint16_t dstConnId, void *connItem);
 int quicProcessHandshakePacket(Quic_Long_Packet_t *handshakePacket, UWB_Address_t peer);
 /* Frame Operations */
-int quicGenerateTypeFrame(Quic_Long_Packet_t *packet, uint16_t framePos, QUIC_FRAME_TYPE type); /* Enter the contents of the frame in the packet */
+int quicGenerateTypeFrame(Quic_Long_Packet_t *packet, uint16_t framePos, int type); /* Enter the contents of the frame in the packet */
 int quicHandleHelloFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
 int quicHandleHandshakeDoneFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
-int quicGenerateACKFrame(Quic_Long_Packet_t *packet, uint16_t framePos, void *connItem);
+int quicGenerateACKFrame(Quic_Long_Packet_t *packet, uint16_t framePos, void *connItem_);
 int quicHandleACKFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
 int quicGenerateParameterFrame(Quic_Long_Packet_t *packet, uint16_t framePos);
 int quicHandleParameterFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);

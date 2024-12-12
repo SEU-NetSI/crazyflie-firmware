@@ -10,6 +10,7 @@
 #define UWB_ROUTING_ENABLE
 //#define UWB_RAFT_ENABLE
 //#define UWB_FLOODING_ENABLE
+#define UWB_QUIC_ENABLE
 
 /* Function Switch */
 //#define UWB_ENABLE_PHR_EXT_MODE

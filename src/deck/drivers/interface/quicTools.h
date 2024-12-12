@@ -1,14 +1,10 @@
-/* USING RECOMMAND:
+/* USING RECOMMEND:
 1. The bucket size is an integer multiple of 2;
 2. It is best to fix the size of the map at once, 
 because map space reallocation is very resource-intensive.*/
 
 #ifndef __TOOLS_H__
 #define __TOOLS_H__
-
-#include <string.h>
-#include <stdlib.h>
-#include <quic.h>
 
 /* For FreeRTOS, we config malloc and free as below. */
 #define MAP_MALLOC pvPortMalloc
@@ -33,12 +29,12 @@ typedef enum {
 typedef struct {
     unsigned hash;
     void *value;
-    Map_Node_t *next;
+    struct Map_Node_t *next;
     /* char key[] and char value[] are exist, since mapCreateNode allocate space for them */
 } Map_Node_t;
 
 typedef struct {
-    Map_Node_t **buckets;
+    struct Map_Node_t **buckets;
     uint16_t bucketNumber;
     uint16_t nodeNumber;
 } Map_Base_t;
@@ -65,8 +61,8 @@ typedef struct {
     mapNext_(&(map)->base, iter)
 
 /* Functions */
-void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketNumber);
-void *mapGet(Map_t *map, const char *key);
+void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketNumber, int size);
+void *mapGet(const Map_t *map, const char *key);
 int mapSet(Map_t *map, const char *key, void *value, uint16_t valueSize);
 void mapRemove_(Map_Base_t *map, const char *key);
 Map_Iter_t mapIter_(void);

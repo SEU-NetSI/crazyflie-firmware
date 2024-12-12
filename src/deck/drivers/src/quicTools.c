@@ -2,8 +2,7 @@
 #include <string.h>
 #include <assert.h>
 #include "FreeRTOS.h"
-#include "tools.h"
-#include "quic.h"
+#include "quicTools.h"
 
 static unsigned mapHash(const char *str) {
     unsigned hash = 5381;
@@ -11,41 +10,38 @@ static unsigned mapHash(const char *str) {
     return hash;
 }
 
-static Map_Node_t *mapCreateNode(const char *key, void *value, int valueSize) {
-    Map_Node_t *node;
-    int keySize = strlen(key) + 1;
-    int valueOffset = keySize + ((sizeof(void *) - keySize) % sizeof(void *)); /* Align according to the number of bits in the system */
-    node = MAP_MALLOC(sizeof(*node) + valueOffset + valueSize);
+static Map_Node_t *mapCreateNode(const char *key, const void *value, const int valueSize) {
+    const unsigned int keySize = strlen(key) + 1;
+    const unsigned int valueOffset = keySize + (sizeof(void *) - keySize) % sizeof(void *); /* Align according to the number of bits in the system */
+    Map_Node_t *node = MAP_MALLOC(sizeof(*node) + valueOffset + valueSize);
     if(!node) return NULL;
     memcpy(node + 1, key, keySize);
     node->hash = mapHash(key);
-    node->value = ((char *) (node + 1)) + valueOffset;
+    node->value = (char *) (node + 1) + valueOffset;
     memcpy(node->value, value, valueSize);
     return node;
 }
 
-static int mapGetBucketIndex(Map_Base_t *map, unsigned hash) {
+static unsigned int mapGetBucketIndex(const Map_Base_t *map, const unsigned int hash) {
     return hash & (map->bucketNumber - 1);
 }
 
-static void mapAddNode(Map_Base_t *map, Map_Node_t *node) {
-    int index = mapGetBucketIndex(map, node->hash);
+static void mapAddNode(const Map_Base_t *map, Map_Node_t *node) {
+    const unsigned int index = mapGetBucketIndex(map, node->hash);
     node->next = map->buckets[index];
-    map->buckets[index] = node;
+    map->buckets[index] = (struct Map_Node_t *)node;
 }
 
-static int mapResize(Map_Base_t *map, int bucketNumber) {
-    Map_Node_t *head, *node, *next;
-    Map_Node_t **buckets;
-    int index;
+static int mapResize(Map_Base_t *map, const int bucketNumber) {
+    Map_Node_t *head = NULL, *node, *next;
+    int index = map->bucketNumber;;
     /* Chain all nodes together */
-    head = NULL;
-    index = map->bucketNumber;
     while(index--) {
-        node = (map->buckets)[index];
+        if (map->buckets == NULL) break;
+        node = (Map_Node_t *)map->buckets[index];
         while(node) {
-            next = node->next;
-            node->next = head;
+            next = (Map_Node_t *)node->next;
+            node->next = (struct Map_Node_t *)head;
             head = node;
             node = next;
         }
@@ -54,9 +50,9 @@ static int mapResize(Map_Base_t *map, int bucketNumber) {
     if(map->buckets != NULL) {
         MAP_FREE(map->buckets);
     }
-    buckets = MAP_MALLOC(sizeof(&map->buckets) * bucketNumber);
+    Map_Node_t **buckets = MAP_MALLOC(sizeof(&map->buckets) * bucketNumber);
     if(buckets != NULL) {
-        map->buckets = buckets;
+        map->buckets = (struct Map_Node_t **)buckets;
         map->bucketNumber = bucketNumber;
     }
     if(map->buckets) {
@@ -64,7 +60,7 @@ static int mapResize(Map_Base_t *map, int bucketNumber) {
         /* Re-add nodes to buckets */
         node = head;
         while(node) {
-            next = node->next;
+            next = (Map_Node_t *)node->next;
             mapAddNode(map, node);
             node = next;
         }
@@ -72,20 +68,19 @@ static int mapResize(Map_Base_t *map, int bucketNumber) {
     return (buckets == NULL) ? -1 : 0;
 }
 
-static Map_Node_t **mapGetNodeRef(Map_Base_t *map, const char *key) {
-    unsigned hash = mapHash(key);
-    Map_Node_t **next;
+static Map_Node_t **mapGetNodeRef(const Map_Base_t *map, const char *key) {
+    const unsigned int hash = mapHash(key);
     if(map->bucketNumber > 0) {
-        next = &map->buckets[mapGetBucketIndex(map, hash)];
+        Map_Node_t **next = (Map_Node_t **)&map->buckets[mapGetBucketIndex(map, hash)];
         while(*next) {
             if((*next)->hash == hash && !strcmp((char *) (*next + 1), key)) return next;
-            next = &(*next)->next;
+            next = (Map_Node_t **)&(*next)->next;
         }
     }
     return NULL;
 }
 
-void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketNumber) {
+void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketNumber, int size) {
     memset(instance, 0, sizeof(Map_t));
     switch(type) {
         case MAP_TYPE_VOID_PTR        :{instance->typeSize = sizeof(void *);break;}
@@ -94,8 +89,8 @@ void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketN
         case MAP_TYPE_CHAR            :{instance->typeSize = sizeof(char);break;}
         case MAP_TYPE_FLOAT           :{instance->typeSize = sizeof(float);break;}
         case MAP_TYPE_DOUBLE          :{instance->typeSize = sizeof(double);break;}
-        case MAP_TYPE_QUIC_CLIENT_CONN:{instance->typeSize = sizeof(QUIC_Client_Conn_Item_t);break;}
-        case MAP_TYPE_QUIC_SERVER_CONN:{instance->typeSize = sizeof(QUIC_Server_Conn_Item_t);break;}
+        case MAP_TYPE_QUIC_CLIENT_CONN:
+        case MAP_TYPE_QUIC_SERVER_CONN:{instance->typeSize = size;break;}
         default:break;
     }
     instance->isCpyAddr = isCpyAddr;
@@ -103,7 +98,7 @@ void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketN
     mapResize(&instance->mapBase, bucketNumber);
 }
 
-void *mapGet(Map_t *map, const char *key) {
+void *mapGet(const Map_t *map, const char *key) {
     Map_Node_t **next = mapGetNodeRef(&map->mapBase, key);
     return next ? (*next)->value : NULL;
 }
@@ -137,6 +132,8 @@ int mapSet(Map_t *map, const char *key, void *value, uint16_t valueSize) {
 
     mapAddNode(&map->mapBase, node);
     map->mapBase.nodeNumber++;
+
+    return 0;
 }
 
 void mapRemove_(Map_Base_t *map, const char *key) {

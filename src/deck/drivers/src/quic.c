@@ -1,20 +1,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include "FreeRTOS.h"
-#include "timers.h"
 #include "debug.h"
 #include "system.h"
-#include "param.h"
 #include "quic.h"
+
+#include <sys/_intsup.h>
+
 #include "routing.h"
-#include "tools.h"
+#include "quicTools.h"
 
 #ifndef QUIC_DEBUG_ENABLE
 #undef DEBUG_PRINT
 #define DEBUG_PRINT
 #endif
 
-#define ERROR -1
+#define ERROR (-1)
 #define SUCCESS 0
 
 static QueueHandle_t rxPacketQueue;
@@ -23,17 +24,14 @@ static QueueHandle_t txOneRTTBufferQueue;
 static TaskHandle_t quicRxTaskHandle;
 static QUIC_Node_t quicClientNode; // TODO: may change name
 static QUIC_Node_t quicServerNode;
-// static QUIC_Client_Conn_Item_t quicClientConnBuffer[QUIC_CONNECTION_BUFFER_MAX] = {0};
-// static QUIC_Packet_Seq_Number_Tuple_t connPacketSeqTuple[QUIC_CONNECTION_NUMBER_MAX] = {0};
 static uint16_t quicSrcConnId = 1;
 static uint16_t quicTempSrcConnId = 0; /* There can only be one at the same time */
 static SemaphoreHandle_t quicConnIdMutex;
-// static Map_t quicClientConnBufferMap;
 
 /* Local functions */
 static uint16_t getNextSrcConnId() {
     xSemaphoreTake(quicConnIdMutex, M2T(0));
-    uint16_t nextId = quicSrcConnId++;
+    const uint16_t nextId = quicSrcConnId++;
     xSemaphoreGive(quicConnIdMutex);
     return nextId;
 }
@@ -78,10 +76,14 @@ static void quicRxTask() {
                 curPosLen += packetOffset;
             }
             /* Send integrated packets to peer node */
+            char mapKey[10] = {0};
+            itoa(peerDstConnId, mapKey, 10);
             if(peerStatus == QUIC_CLIENT) {
-                QUIC_Server_Conn_Item_t *connItem = (QUIC_Server_Conn_Item_t *) mapGet(&quicServerNode.conns.connItemsMap, peerDstConnId);
+                QUIC_Server_Conn_Item_t *connItem = mapGet(&quicServerNode.conns.connItemsMap, mapKey);
                 if(connItem == NULL) { /* When server receive connection request message */
-                    connItem = (QUIC_Server_Conn_Item_t *) mapGet(&quicServerNode.conns.connItemsMap, quicTempSrcConnId);
+                    memset(mapKey, 0, sizeof(mapKey));
+                    itoa(quicTempSrcConnId, mapKey, 10);
+                    connItem = (QUIC_Server_Conn_Item_t *) mapGet(&quicServerNode.conns.connItemsMap, mapKey);
                 }
                 ASSERT(connItem != NULL); /* If connection is still null, then connection is not exist */
                 switch(connItem->currentState) {
@@ -98,7 +100,7 @@ static void quicRxTask() {
                         break;
                 }
             } else if(peerStatus == QUIC_SERVER) {
-                QUIC_Client_Conn_Item_t *connItem = (QUIC_Client_Conn_Item_t *) mapGet(&quicClientNode.conns.connItemsMap, peerDstConnId);
+                QUIC_Client_Conn_Item_t *connItem = mapGet(&quicClientNode.conns.connItemsMap, mapKey);
                 ASSERT(connItem != NULL);
                 switch(connItem->currentState) {
                     case QUIC_CLIENT_CONN_STATE_INIT:
@@ -124,33 +126,22 @@ int quicConnInit(UWB_Address_t peer, uint16_t srcConnId, uint16_t dstConnId) {
         DEBUG_PRINT("Connection is full, can not resolve this connection.");
         return ERROR;
     }
-    // int srcConnId = srcConnId;
-    // int dstConnId = dstConnId;
-    QUIC_Client_Conn_Item_t connItem;
-    memset(&connItem, 0, sizeof(QUIC_Client_Conn_Item_t));
-    // for(int i = 0; i < QUIC_CONNECTION_BUFFER_MAX; i++) {
-    //     if(quicClientConnBuffer[i].connId == 0) { /* when connId is 0, we consider this buffer slot is empty. */
-    //         connItem = &quicClientConnBuffer[i];
-    //         break;
-    //     } else if(i == QUIC_CONNECTION_BUFFER_MAX - 1) { /* the buffer is full, we can adjust constant QUIC_CONNECTION_BUFFER_MAX */
-    //         DEBUG_PRINT("Connection buffer is full, can not resolve this connection.");
-    //         return ERROR;
-    //     }
-    // }
+
+    QUIC_Client_Conn_Item_t connItem = {0};
     connItem.connId = srcConnId;
     connItem.dstConnId = dstConnId;
     connItem.currentState = QUIC_CLIENT_CONN_STATE_INIT;
     connItem.peer = peer;
     /* since memset, packetSeqTuple is already set 0. */
-    mapSet(&quicClientNode.conns.connItemsMap, srcConnId, &connItem, sizeof(QUIC_Client_Conn_Item_t));
+    char mapKey[10] = {0};
+    itoa(srcConnId, mapKey, 10);
+    mapSet(&quicClientNode.conns.connItemsMap, mapKey, &connItem, sizeof(QUIC_Client_Conn_Item_t));
     quicClientNode.conns.size++;
     return SUCCESS;
 }
 
 void quicInit() {
-    rxPacketQueue = XQueueCreate(QUIC_RX_PACKET_QUEUE_SIZE, QUIC_RX_PACKET_ITEM_SIZE);
-    txInitialOrHandshakeBufferQueue = xQueueCreate(QUIC_TX_LONG_BUFFER_QUEUE_SIZE, QUIC_TX_LONG_BUFFER_QUEUE_ITEM_SIZE);
-    txOneRTTBufferQueue = xQueueCreate(QUIC_TX_ONE_RTT_BUFFER_QUEUE_SIZE, QUIC_TX_ONE_RTT_BUFFER_QUEUE_ITEM_SIZE);
+    rxPacketQueue = xQueueCreate(QUIC_RX_PACKET_QUEUE_SIZE, QUIC_RX_PACKET_ITEM_SIZE);
     UWB_Data_Packet_Listener_t listener = {
         .type = UWB_DATA_MESSAGE_QUIC,
         .rxQueue = rxPacketQueue
@@ -160,20 +151,18 @@ void quicInit() {
     quicClientNode.me = uwbGetAddress();
     quicClientNode.conns.size = 0;
     quicClientNode.conns.capacity = QUIC_CONNECTION_NUMBER_MAX;
-    // memset(quicClientNode.conns.items, 0, sizeof(QUIC_Client_Conn_Item_t) * QUIC_CONNECTION_NUMBER_MAX); // TODO: may debug
-    // mapInit(&quicClientConnBufferMap, MAP_TYPE_QUIC_CONN, MAP_NOT_COPY_ADDR, QUIC_CONNECTION_BUFFER_MAX);
-    mapInit(&quicClientNode.conns.connItemsMap, MAP_TYPE_QUIC_CLIENT_CONN, MAP_NOT_COPY_ADDR, QUIC_CONNECTION_NUMBER_MAX);
+    mapInit(&quicClientNode.conns.connItemsMap, MAP_TYPE_QUIC_CLIENT_CONN, MAP_NOT_COPY_ADDR, QUIC_CONNECTION_NUMBER_MAX, sizeof(QUIC_Client_Conn_Item_t));
 
     quicServerNode.me = uwbGetAddress();
     quicServerNode.conns.size = 0;
     quicServerNode.conns.capacity = QUIC_CONNECTION_NUMBER_MAX;
-    mapInit(&quicServerNode.conns.connItemsMap, MAP_TYPE_QUIC_SERVER_CONN, MAP_NOT_COPY_ADDR, QUIC_CONNECTION_NUMBER_MAX);
+    mapInit(&quicServerNode.conns.connItemsMap, MAP_TYPE_QUIC_SERVER_CONN, MAP_NOT_COPY_ADDR, QUIC_CONNECTION_NUMBER_MAX, sizeof(QUIC_Server_Conn_Item_t));
 
     xTaskCreate(quicRxTask, ADHOC_DECK_QUIC_RX_TASK_NAME, UWB_TASK_STACK_SIZE, NULL, ADHOC_DECK_TASK_PRI, &quicRxTaskHandle);
 }
 
 /* Frame Operations */
-int quicGenerateTypeFrame(Quic_Long_Packet_t *packet, uint16_t framePos, QUIC_FRAME_TYPE type) {
+int quicGenerateTypeFrame(Quic_Long_Packet_t *packet, uint16_t framePos, int type) {
     if(type >= QUIC_LONG_PACKET_TYPE_COUNT) {
         DEBUG_PRINT("Error in generate only type frame, type is compatibal.");
         return ERROR;
@@ -185,11 +174,13 @@ int quicGenerateTypeFrame(Quic_Long_Packet_t *packet, uint16_t framePos, QUIC_FR
     }
     Quic_Type_Frame_t *frame = (Quic_Type_Frame_t *) (packet->packetPayload[framePos]);
     frame->type = type;
-    ASSERT((unsigned long)packet->header.length + sizeof(Quic_Type_Frame_t) < QUIC_LONG_PACKET_PAYLOAD_SIZE_MAX);
+    ASSERT(packet->header.length + sizeof(Quic_Type_Frame_t) < QUIC_LONG_PACKET_PAYLOAD_SIZE_MAX);
     packet->header.length += sizeof(Quic_Type_Frame_t);
     /* If handshake done frame */
     if(type == QUIC_FRAME_HANDSHAKE_DONE) {
-        QUIC_Server_Conn_Item_t *connItem = (QUIC_Server_Conn_Item_t *) mapGet(&quicServerNode.conns.connItemsMap, packet->header.srcConnId);
+        char mapKey[10] = {0};
+        itoa(packet->header.srcConnId, mapKey, 10);
+        QUIC_Server_Conn_Item_t *connItem = mapGet(&quicServerNode.conns.connItemsMap, mapKey);
         ASSERT(connItem != NULL);
         connItem->currentState = QUIC_SERVER_CONN_STATE_OPEN;
     }
@@ -203,8 +194,7 @@ int quicHandleHelloFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer
     /* ADD-TODO: receive dupicated connection request */
 
     /* Create new connection for client */
-    QUIC_Server_Conn_Item_t connItem;
-    memset(&connItem, 0, sizeof(QUIC_Server_Conn_Item_t));
+    QUIC_Server_Conn_Item_t connItem = {0};
     connItem.peer = peer;
     connItem.connId = getNextSrcConnId();
     connItem.currentState = QUIC_SERVER_CONN_STATE_INIT;
@@ -213,7 +203,9 @@ int quicHandleHelloFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer
     connItem.packetSeqTuple.zeroRTTSeqNumber = 0;
     connItem.packetSeqTuple.handshakeSeqNumber = 0;
     connItem.packetSeqTuple.oneRTTSeqNumber = 0;
-    mapSet(&quicServerNode.conns.connItemsMap, connItem.connId, &connItem, sizeof(QUIC_Server_Conn_Item_t));
+    char mapKey[10] = {0};
+    itoa(connItem.connId, mapKey, 10);
+    mapSet(&quicServerNode.conns.connItemsMap, mapKey, &connItem, sizeof(QUIC_Server_Conn_Item_t));
     quicServerNode.conns.size++;
 
     quicTempSrcConnId = connItem.connId; /* Will be used when server reply */
@@ -230,7 +222,7 @@ int quicHandleHandshakeDoneFrame(Quic_Long_Packet_t *packet, int pos, UWB_Addres
     return sizeof(Quic_Type_Frame_t);
 }
 
-int quicGenerateACKFrame(Quic_Long_Packet_t *packet, uint16_t framePos, void *connItem) {
+int quicGenerateACKFrame(Quic_Long_Packet_t *packet, uint16_t framePos, void *connItem_) {
     if(packet->header.length + sizeof(Quic_ACK_Frame_t) >= QUIC_LONG_PACKET_PAYLOAD_SIZE_MAX) {
         if(packet->header.longPacketType == QUIC_INITIAL_PACKET) DEBUG_PRINT("Error in Initial packet add ACK frame, payload overflow.");
         else if(packet->header.longPacketType == QUIC_HANDSHAKE_PACKET) DEBUG_PRINT("Error in handshake packet add ACK frame, payload overflow.");
@@ -240,7 +232,7 @@ int quicGenerateACKFrame(Quic_Long_Packet_t *packet, uint16_t framePos, void *co
     Quic_ACK_Frame_t *frame = (Quic_ACK_Frame_t *) (packet->packetPayload[framePos]);
     frame->header.type = QUIC_FRAME_ACK;
     if(packet->header.status == QUIC_CLIENT) {
-        QUIC_Client_Conn_Item_t *connItem = (QUIC_Client_Conn_Item_t *) connItem;
+        QUIC_Client_Conn_Item_t *connItem = (QUIC_Client_Conn_Item_t *) connItem_;
         ASSERT(connItem != NULL);
         frame->header.largestACK = connItem->packetReceiveWindow->largestACK;
         frame->header.ACKDelay = packet->header.headerForm == QUIC_LONG_HEADER ? 0 : QUIC_ACK_DELAY_MAX; // TODO: set timer and calculate delay;
@@ -253,7 +245,7 @@ int quicGenerateACKFrame(Quic_Long_Packet_t *packet, uint16_t framePos, void *co
         }
     } else if (packet->header.status == QUIC_SERVER)
     {
-        QUIC_Server_Conn_Item_t *connItem = (QUIC_Server_Conn_Item_t *) connItem;
+        QUIC_Server_Conn_Item_t *connItem = (QUIC_Server_Conn_Item_t *) connItem_;
         ASSERT(connItem != NULL);
         frame->header.largestACK = connItem->packetReceiveWindow->largestACK;
         frame->header.ACKDelay = packet->header.headerForm == QUIC_LONG_HEADER ? 0 : QUIC_ACK_DELAY_MAX; // TODO: set timer and calculate delay;
@@ -629,7 +621,7 @@ int quicClientSendConnReply(UWB_Address_t peer, uint16_t connId) {
     handshakePacket->header.status = QUIC_CLIENT;
     packetPos += quicGenerateHandshakePacket(handshakePacket, connItem->connId, connItem->dstConnId, (void *)connItem);
     /* Generate frames */
-    int framePos = 0;
+    framePos = 0;
     /* Generate ACK frame */
     framePos += quicGenerateACKFrame(handshakePacket, framePos, (void *)connItem);
     packetPos += framePos;
@@ -674,3 +666,5 @@ int quicServerSendConnDone(UWB_Address_t peer, uint16_t connId) {
 }
 
 /* Quic Interaction Operations */
+
+// TODO: modify mapKey relative functions

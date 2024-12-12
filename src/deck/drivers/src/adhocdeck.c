@@ -26,6 +26,7 @@
 #include "flooding.h"
 #include "routing.h"
 #include "raft.h"
+#include "quic.h"
 
 #ifndef UWB_DEBUG_ENABLE
   #undef DEBUG_PRINT
@@ -391,6 +392,9 @@ static void uwbTaskInit() {
 #endif
 #ifdef UWB_FLOODING_ENABLE
   floodingInit();
+#endif
+#ifdef UWB_QUIC_ENABLE
+  quicInit();
 #endif
 }
 /*********** Deck driver initialization ***************/
