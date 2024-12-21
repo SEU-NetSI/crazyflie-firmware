@@ -25,6 +25,7 @@
 #define QUIC_ACK_DELAY_MAX 2000 // 2 seconds
 
 /* QUIC Parameters */
+#define QUIC_PARAMETER_NUMBER 10
 #define QUIC_MAX_IDLE_TIMEOUT_DEFAULT 3000 // 3 seconds
 #define QUIC_MAX_ROUTE_PAYLOAD_SIZE_DEFAULT ROUTING_DATA_PACKET_PAYLOAD_SIZE_MAX
 #define QUIC_INITIAL_MAX_DATA_DEFAULT 1000 // 1KB
@@ -36,15 +37,19 @@
 /* QUIC Local Structs */
 /* QUIC State Machine */
 typedef enum {
-    QUIC_CLIENT_CONN_STATE_INIT,
-    QUIC_CLIENT_CONN_STATE_HANDSHAKE_REPLY,
+    QUIC_CLIENT_CONN_STATE_INITIAL,
+    QUIC_CLIENT_CONN_STATE_HELLO_SENT,
+    QUIC_CLIENT_CONN_STATE_PARAMETER_HANDLED,
+    QUIC_CLIENT_CONN_STATE_ACKNOWLEDGE_SENT,
     QUIC_CLIENT_CONN_STATE_OPEN,
     QUIC_CLIENT_CONN_STATE_CLOSE,
 } QUIC_CLIENT_CONN_STATE_TYPE;
 
 typedef enum {
-    QUIC_SERVER_CONN_STATE_INIT,
-    QUIC_SERVER_CONN_STATE_HANDSHAKE_LISTEN,
+    QUIC_SERVER_CONN_STATE_INITIAL,
+    QUIC_SERVER_CONN_STATE_HELLO_HANDLED,
+    QUIC_SERVER_CONN_STATE_PARAMETER_SENT,
+    QUIC_SERVER_CONN_STATE_ACKNOWLEDGE_HANDLED,
     QUIC_SERVER_CONN_STATE_OPEN,
     QUIC_SERVER_CONN_STATE_CLOSE,
 } QUIC_SERVER_CONN_STATE_TYPE;
@@ -57,6 +62,26 @@ typedef enum {
     QUIC_PACKET_ACK_COUNT
 } QUIC_PACKET_ACK_TYPE;
 
+/* Node Status */
+typedef enum {
+    QUIC_CLIENT,
+    QUIC_SERVER,
+} QUIC_NODE_STATUS;
+
+typedef enum {
+    QUIC_ORIGINAL_DESTINATION_CONNECTION_ID,
+    QUIC_MAX_IDLE_TIMEOUT,
+    QUIC_MAX_ROUTE_PAYLOAD_SIZE,
+    QUIC_INITIAL_MAX_DATA,
+    QUIC_INITIAL_MAX_STREAM_DATA_UNI,
+    QUIC_INITIAL_MAX_STREAMS_UNI,
+    QUIC_ACK_DELAY_EXPONENT,
+    QUIC_MAX_ACK_DELAY,
+    QUIC_ACTIVE_CONNECTION_ID_LIMIT,
+    QUIC_INITIAL_SOURCE_CONNECTION_ID,
+    QUIC_PARAMETER_TYPE_COUNT,
+} QUIC_PARAMETER_TYPE;
+
 typedef struct {
     uint32_t largestACK;
     uint32_t minimumACK;
@@ -65,14 +90,8 @@ typedef struct {
 } QUIC_Packet_ACK_Window_t;
 
 typedef struct {
-    uint32_t initialSeqNumber;
-    uint32_t zeroRTTSeqNumber;
-    uint32_t handshakeSeqNumber;
-    uint32_t oneRTTSeqNumber;
-} QUIC_Packet_Seq_Number_Tuple_t;
-
-typedef struct {
-    // TODO: add parameters
+    int size;
+    uint16_t parameters[QUIC_PARAMETER_NUMBER];
 } QUIC_Transport_Params_Tuple_t;
 
 typedef struct {
@@ -80,7 +99,6 @@ typedef struct {
     uint16_t connId;
     uint16_t dstConnId;
     QUIC_CLIENT_CONN_STATE_TYPE currentState;
-    QUIC_Packet_Seq_Number_Tuple_t packetSeqTuple;
     QUIC_Transport_Params_Tuple_t transportParamsTuple;
     QUIC_Packet_ACK_Window_t packetSendWindow[QUIC_PACKET_ACK_COUNT];
     QUIC_Packet_ACK_Window_t packetReceiveWindow[QUIC_PACKET_ACK_COUNT];
@@ -91,7 +109,6 @@ typedef struct {
     uint16_t connId;
     uint16_t dstConnId;
     QUIC_SERVER_CONN_STATE_TYPE currentState;
-    QUIC_Packet_Seq_Number_Tuple_t packetSeqTuple;
     QUIC_Packet_ACK_Window_t packetSendWindow[QUIC_PACKET_ACK_COUNT];
     QUIC_Packet_ACK_Window_t packetReceiveWindow[QUIC_PACKET_ACK_COUNT];
 } QUIC_Server_Conn_Item_t;
@@ -99,20 +116,17 @@ typedef struct {
 typedef struct {
     uint16_t size;
     uint16_t capacity;
-    // QUIC_Client_Conn_Item_t items[QUIC_CONNECTION_NUMBER_MAX];
     Map_t connItemsMap; /* Hash table, to store conn parameters, type is QUIC_Client_Conn_Item_t*/
-} QUIC_Conn_t; // TODO: coding
+    /* Functions */
+    void (*connItemSet)(Map_t *connItemsMap, uint16_t connId, void *connItem, QUIC_NODE_STATUS status);
+    void *(*connItemGet)(Map_t *connItemsMap, uint16_t connId);
+} QUIC_Conn_t;
 
 typedef struct {
     UWB_Address_t me;
+    SemaphoreHandle_t mu;
     QUIC_Conn_t conns;
-} QUIC_Node_t; // TODO: coding
-
-/* Node Status */
-typedef enum {
-    QUIC_CLIENT,
-    QUIC_SERVER,
-} QUIC_NODE_STATUS;
+} QUIC_Node_t;
 
 /* QUIC Packets */
 typedef enum {
@@ -168,7 +182,8 @@ typedef enum{
     QUIC_FRAME_HANDSHAKE_DONE,
     QUIC_FRAME_ACK,
     QUIC_FRAME_ACK_ECN,
-    QUIC_FRAME_PARAMETER
+    QUIC_FRAME_PARAMETER,
+    QUIC_FRAME_TYPE_COUNT
 } QUIC_FRAME_TYPE;
 
 typedef struct {
@@ -194,20 +209,6 @@ typedef struct {
     //TODO: ECN
 } __attribute__((packed)) Quic_ACK_Frame_t;
 
-typedef enum {
-    QUIC_ORIGINAL_DESTINATION_CONNECTION_ID,
-    QUIC_MAX_IDLE_TIMEOUT,
-    QUIC_MAX_ROUTE_PAYLOAD_SIZE,
-    QUIC_INITIAL_MAX_DATA,
-    QUIC_INITIAL_MAX_STREAM_DATA_UNI,
-    QUIC_INITIAL_MAX_STREAMS_UNI,
-    QUIC_ACK_DELAY_EXPONENT,
-    QUIC_MAX_ACK_DELAY,
-    QUIC_ACTIVE_CONNECTION_ID_LIMIT,
-    QUIC_INITIAL_SOURCE_CONNECTION_ID,
-    QUIC_PARAMETER_TYPE_COUNT,
-} QUIC_PARAMETER_TYPE;
-
 typedef struct {
     uint8_t parameterID;
     uint8_t parameterLength;
@@ -217,30 +218,28 @@ typedef struct {
 typedef struct {
     uint8_t type;
     uint8_t size;
-    uint8_t parameters[QUIC_PARAMETER_FRAME_ITEM_SIZE_MAX]; //TODO: calculate number of parameter size
+    uint8_t parameters[QUIC_PARAMETER_FRAME_ITEM_SIZE_MAX];
 } __attribute__((packed)) Quic_Parameter_Frame_t;
 
 /* Quic Operations */
-/* Connection Operations */
-int quicConnInit(UWB_Address_t peer, uint16_t srcConnId, uint16_t dstConnId); // TODO: coding
 /* Packet Operations */
-int quicGenerateInitialPacket(Quic_Long_Packet_t *packet, uint16_t srcConnId, uint16_t dstConnId, void *connItem);
-int quicProcessInitialPacket(Quic_Long_Packet_t *initialPacket, UWB_Address_t peer);
-int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, uint16_t srcConnId, uint16_t dstConnId, void *connItem);
-int quicProcessHandshakePacket(Quic_Long_Packet_t *handshakePacket, UWB_Address_t peer);
+int quicGenerateInitialPacket(Quic_Long_Packet_t *packet, const uint16_t srcConnId, const uint16_t dstConnId, void *connItem, QUIC_NODE_STATUS status);
+int quicProcessInitialPacket(const Quic_Long_Packet_t *initialPacket, UWB_Address_t peer);
+int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, const uint16_t srcConnId, const uint16_t dstConnId, void *connItem, QUIC_NODE_STATUS status);
+int quicProcessHandshakePacket(Quic_Long_Packet_t *handshakePacket, const UWB_Address_t peer);
 /* Frame Operations */
-int quicGenerateTypeFrame(Quic_Long_Packet_t *packet, uint16_t framePos, int type); /* Enter the contents of the frame in the packet */
-int quicHandleHelloFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
-int quicHandleHandshakeDoneFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
-int quicGenerateACKFrame(Quic_Long_Packet_t *packet, uint16_t framePos, void *connItem_);
-int quicHandleACKFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
-int quicGenerateParameterFrame(Quic_Long_Packet_t *packet, uint16_t framePos);
-int quicHandleParameterFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
+int quicGenerateTypeFrame(Quic_Long_Packet_t *packet, uint16_t framePos, QUIC_FRAME_TYPE type); /* Enter the contents of the frame in the packet */
+int quicHandleHelloFrame(const Quic_Long_Packet_t *packet, UWB_Address_t peer);
+int quicHandleHandshakeDoneFrame(const Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
+int quicGenerateACKFrame(Quic_Long_Packet_t *packet, const int framePos, const void *connItem_);
+int quicHandleACKFrame(const Quic_Long_Packet_t *packet, const int pos, UWB_Address_t peer);
+int quicGenerateParameterFrame(Quic_Long_Packet_t *packet, const uint16_t framePos);
+int quicHandleParameterFrame(Quic_Long_Packet_t *packet, const int pos, UWB_Address_t peer);
 /* Message Operations */
-int quicClientSendConnRequest(UWB_Address_t peer);
-int quicServerSendConnReply(UWB_Address_t peer, uint16_t connId);
-int quicClientSendConnReply(UWB_Address_t peer, uint16_t connId);
-int quicServerSendConnDone(UWB_Address_t peer, uint16_t connId);
+int quicClientSendConnRequest(const UWB_Address_t peer);
+int quicServerSendConnReply(const UWB_Address_t peer, const uint16_t connId);
+int quicClientSendConnReply(const UWB_Address_t peer, const uint16_t connId);
+int quicServerSendConnDone(const UWB_Address_t peer, const uint16_t connId);
 /* Interaction Operations */
 void quicInit();
 int quicConnect(); // TODO: coding

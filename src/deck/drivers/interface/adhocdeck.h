@@ -5,15 +5,15 @@
 #include "mac_802_15_4.h"
 #include "queue.h"
 
-//#define UWB_DEBUG_ENABLE
+#define UWB_DEBUG_ENABLE
 #define UWB_RANGING_ENABLE
 #define UWB_ROUTING_ENABLE
-//#define UWB_RAFT_ENABLE
+// #define UWB_RAFT_ENABLE
 //#define UWB_FLOODING_ENABLE
 #define UWB_QUIC_ENABLE
 
 /* Function Switch */
-//#define UWB_ENABLE_PHR_EXT_MODE
+#define UWB_ENABLE_PHR_EXT_MODE
 
 #define UWB_SPEED_OF_LIGHT 299702547
 #define UWB_MAX_TIMESTAMP 1099511627776  // 2**40

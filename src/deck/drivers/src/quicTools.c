@@ -4,6 +4,9 @@
 #include "FreeRTOS.h"
 #include "quicTools.h"
 
+#include <debug.h>
+#include <quic.h>
+
 static unsigned mapHash(const char *str) {
     unsigned hash = 5381;
     while(*str) hash = ((hash << 5) + hash) ^ *str++;
