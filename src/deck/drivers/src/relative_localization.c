@@ -189,7 +189,7 @@ void relativeLocoTask(void *arg)
             address_t neighborAddress = currentNeighborAddressInfo.address[index];
             
             // Add by lcy
-            if(neighborAddress != 0) continue;
+           // if(neighborAddress != 0) continue;
 
             bool isNewAdd; // 邻居是否是新加入的
 
