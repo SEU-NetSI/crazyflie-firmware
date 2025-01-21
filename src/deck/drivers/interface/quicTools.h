@@ -7,9 +7,10 @@ because map space reallocation is very resource-intensive.*/
 #define __TOOLS_H__
 
 /* For FreeRTOS, we config malloc and free as below. */
-#define MAP_MALLOC pvPortMalloc
-#define MAP_FREE vPortFree
+#define TOOL_MALLOC pvPortMalloc
+#define TOOL_FREE vPortFree
 
+/* MAP */
 typedef enum {
     MAP_TYPE_VOID_PTR,    // void *
     MAP_TYPE_CHAR_PTR,    // char *
@@ -63,10 +64,61 @@ typedef struct {
 /* Functions */
 void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketNumber, int size);
 void *mapGet(const Map_t *map, const char *key);
-int mapSet(Map_t *map, const char *key, void *value, uint16_t valueSize);
+void *mapSet(Map_t *map, const char *key, void *value, uint16_t valueSize);
 void mapRemove_(Map_Base_t *map, const char *key);
 Map_Iter_t mapIter_(void);
 const char *mapNext_(Map_Base_t *map, Map_Iter_t *iter);
 void mapClear_(Map_Base_t *map);
+
+/* MEMORY BLOCK */
+typedef struct DataBlock {
+    uint8_t *data;
+    uint32_t offset;
+    uint32_t length;
+    uint32_t capacity;
+    struct DataBlock *next;
+    bool isFin;
+} DataBlock_t;
+
+typedef struct BlockList {
+    DataBlock_t *head;
+    DataBlock_t *tail;
+    uint32_t count;
+} BlockList_t;
+
+/* Functions */
+DataBlock_t *dataBlockInit(uint32_t capacity);
+void dataBlockClear(DataBlock_t *block);
+
+/* RBTree */
+#define RED   0
+#define BLACK 1
+/* Key Type */
+typedef int   KeyType_t;
+typedef int   DataSizeType_t;
+typedef void* DataPtr_t;
+/* RBTree Node */
+typedef struct RBTreeNode {
+    unsigned char color;
+    KeyType_t key;
+    DataSizeType_t size;
+    DataPtr_t data;
+    struct RBTreeNode *left;
+    struct RBTreeNode *right;
+    struct RBTreeNode *parent;
+} RBNode_t;
+/* Root of RBTree */
+typedef struct {
+    RBNode_t *node;
+    uint16_t size;
+} RBRoot_t;
+/* Functions */
+RBRoot_t* createRBTree(void); // create a new RBTree
+void clearRBTree(RBRoot_t *root); // destroy a RBTree
+int insertRBTree(RBRoot_t *root, KeyType_t key, DataPtr_t data, DataSizeType_t dataSize); // insert a node to RBTree
+int deleteRBTree(RBRoot_t *root, KeyType_t key); // delete a node from RBTree with key
+RBNode_t* searchRBTree(const RBRoot_t *root, KeyType_t key); // search a node in RBTree
+int RBTreeMinimum(const RBRoot_t *root, DataPtr_t *dataPtrPtr); // find the minimum node in RBTree
+int RBTreeMaximum(const RBRoot_t *root, DataPtr_t *dataPtrPtr); // find the maximum node in RBTree
 
 #endif

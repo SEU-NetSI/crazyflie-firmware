@@ -29,3 +29,4 @@ obj-$(CONFIG_DECK_ADHOC)         += flooding_struct.o
 obj-$(CONFIG_DECK_ADHOC)         += flooding.o
 obj-$(CONFIG_DECK_ADHOC)         += quic.o
 obj-$(CONFIG_DECK_ADHOC)         += quicTools.o
+obj-$(CONFIG_DECK_ADHOC)         += transporting.o
