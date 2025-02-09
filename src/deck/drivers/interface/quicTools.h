@@ -20,6 +20,8 @@ typedef enum {
     MAP_TYPE_DOUBLE,      // double
     MAP_TYPE_QUIC_CLIENT_CONN,   // QUIC_Client_Conn_Item_t
     MAP_TYPE_QUIC_SERVER_CONN,   // QUIC_Server_Conn_Item_t
+    MAP_TYPE_QUIC_SEND_STREAM,   // QUIC_Send_Stream_Item_t
+    MAP_TYPE_QUIC_READ_STREAM,   // QUIC_Read_Stream_Item_t
 } MAP_TYPE;
 
 typedef enum {
@@ -53,13 +55,13 @@ typedef struct {
 
 /* Macro Function */
 #define mapClear(map) \
-    mapClear_(&(map)->base)
+    mapClear_(&(map)->mapBase)
 #define mapRemove(map, key) \
-    mapRemove_(&(map)->base, key)
+    mapRemove_(&(map)->mapBase, key)
 #define mapIter(map) \
     mapIter_()
 #define mapNext(map, iter) \
-    mapNext_(&(map)->base, iter)
+    mapNext_(&(map)->mapBase, iter)
 
 /* Functions */
 void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketNumber, int size);
@@ -74,8 +76,8 @@ void mapClear_(Map_Base_t *map);
 typedef struct DataBlock {
     uint8_t *data;
     uint32_t offset;
-    uint32_t length;
-    uint32_t capacity;
+    uint32_t length; // the data length in the block
+    uint32_t capacity; // max capacity of data length of the block
     struct DataBlock *next;
     bool isFin;
 } DataBlock_t;
@@ -111,6 +113,7 @@ typedef struct RBTreeNode {
 typedef struct {
     RBNode_t *node;
     uint16_t size;
+    void *externResourcePtr;
 } RBRoot_t;
 /* Functions */
 RBRoot_t* createRBTree(void); // create a new RBTree

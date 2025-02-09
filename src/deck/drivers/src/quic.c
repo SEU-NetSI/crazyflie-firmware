@@ -1,14 +1,10 @@
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include "FreeRTOS.h"
 #include "debug.h"
 #include "system.h"
 #include "quic.h"
-
-#include <assert.h>
-
-#include "routing.h"
-#include "quicTools.h"
 
 #ifndef QUIC_DEBUG_ENABLE
 #undef DEBUG_PRINT
@@ -26,10 +22,11 @@
 #define QUIC_DEFAULT_ACK_RANGES_CAPACITY 10
 
 static QueueHandle_t rxPacketQueue;
+QueueHandle_t streamNotifyQueue;
 static TaskHandle_t quicRxTaskHandle;
 static TaskHandle_t quicTxTaskHandle;
-static QUIC_Node_t quicClientNode;
-static QUIC_Node_t quicServerNode;
+QUIC_Node_t quicClientNode;
+QUIC_Node_t quicServerNode;
 static uint16_t quicSrcConnId = 1;
 static uint16_t quicTempSrcConnId = 0; /* There can only be one at the same time */
 static SemaphoreHandle_t quicConnIdMutex;
@@ -94,8 +91,8 @@ static DataBlock_t *getStreamBufferDataBlock(void *streamBuffer_, const uint32_t
 
 /* Send buffer operations */
 /* Find a free block to cache data, and add it to the pending list, used by application */
-static int writeStreamSendBuffer(QUIC_Stream_Send_Buffer_t *streamBuffer, const uint8_t *data, const uint32_t dataLength) {
-    if(streamBuffer->sendOffset + dataLength > streamBuffer->maxSendOffset) { // flow control
+static int writeStreamSendBuffer(QUIC_Stream_Send_Buffer_t *streamBuffer, const uint8_t *data, const uint32_t dataLength, bool isFin) { // TODO: modify, add fin
+    if(streamBuffer->sendOffset + dataLength > streamBuffer->maxSendOffset) { // overflow
         DEBUG_PRINT("writeStreamSendBuffer: maxSendOffset exceeded\n");
         return ERROR;
     }
@@ -107,7 +104,9 @@ static int writeStreamSendBuffer(QUIC_Stream_Send_Buffer_t *streamBuffer, const 
     /* copy the data to the block */
     memcpy(block->data, data, dataLength);
     block->length = dataLength;
-    block->offset = streamBuffer->sendOffset;
+//    block->capacity = QUIC_STREAM_DATA_BLOCK_MAX_DATA_SIZE;
+    block->offset = streamBuffer->maxSendOffset;
+    block->isFin = isFin;
     /* add the block to the send list */
     if(streamBuffer->pendingBlockList.head == NULL) {
         streamBuffer->pendingBlockList.head = block;
@@ -116,7 +115,7 @@ static int writeStreamSendBuffer(QUIC_Stream_Send_Buffer_t *streamBuffer, const 
     }
     streamBuffer->pendingBlockList.tail = block;
     streamBuffer->pendingBlockList.count++;
-    streamBuffer->sendOffset += dataLength;
+    streamBuffer->maxSendOffset += dataLength;
     return (int)dataLength;
 }
 /* when stream data send, we need to get data from send buffer, and load it to packet */
@@ -141,8 +140,7 @@ static int readStreamSendBuffer(QUIC_Stream_Send_Buffer_t *streamBuffer, QUIC_St
     sendingData->length = sendLength;
     sendingData->offset = streamBuffer->sendOffset;
     sendingData->packetNumber = packetNumber;
-    if (block->isFin) sendingData->isFin = true;
-    else sendingData->isFin = false;
+    sendingData->isFin = block->isFin;
     /* remove to the unacked block list */
     if(blockOffset + sendLength >= block->length) { // TODO: there block offset may has some bug
         /* entire block send ready */
@@ -183,7 +181,7 @@ static int readStreamSendBuffer(QUIC_Stream_Send_Buffer_t *streamBuffer, QUIC_St
         }
         streamBuffer->unackedBlockList.count++;
     }
-    streamBuffer->sendOffset += sendLength;
+    streamBuffer->sendOffset += sendLength; // TODO: modify, when the block is resending packet, the send offset is not right
     return (int)sendLength;
 }
 
@@ -249,10 +247,10 @@ static int toResendStreamSendBuffer(QUIC_Stream_Send_Buffer_t *streamBuffer, con
 /* Receive buffer operations */
 /* Read data from the reception buffer, and put the data to the application cache */
 static int readStreamReceiveBuffer(QUIC_Stream_Receive_Buffer_t *streamBuffer, const uint8_t *data, const uint32_t dataLength) {
-    if(streamBuffer->readOffset >= streamBuffer->consumedOffset) {
-        DEBUG_PRINT("writeStreamReceiveBuffer: no data can read\n");
-        return ERROR;
-    }
+//    if(streamBuffer->readOffset >= streamBuffer->consumedOffset) {
+//        DEBUG_PRINT("writeStreamReceiveBuffer: no data can read\n");
+//        return ERROR;
+//    }
     uint32_t totalReadLen = 0;
     const DataBlock_t *curr = streamBuffer->receiveBlockList.head;
     /* Find current offset block */
@@ -267,6 +265,8 @@ static int readStreamReceiveBuffer(QUIC_Stream_Receive_Buffer_t *streamBuffer, c
         streamBuffer->readOffset += readLen;
         if(blockOffset + readLen >= curr->length) curr = curr->next;
     }
+//    if (curr->isFin) return 1; // read buffer is finished
+//    else return 0; // read buffer successfully, but is not finished
     return (int)totalReadLen;
 }
 
@@ -288,7 +288,7 @@ static int updateStreamReceiveBufferConsumedOffset(QUIC_Stream_Receive_Buffer_t 
         if(currBlockOffsetEnd > currOffset) currOffset = currBlockOffsetEnd;
         /* release the consumed block */
         if(streamBuffer->readOffset >= currBlockOffsetEnd) {
-            /* remove form the reception block list */
+            /* remove from the reception block list */
             if(prevBlock != NULL) prevBlock->next = currBlock->next;
             else streamBuffer->receiveBlockList.head = currBlock->next;
             if(currBlock == streamBuffer->receiveBlockList.tail) streamBuffer->receiveBlockList.tail = prevBlock;
@@ -336,11 +336,45 @@ static int mergeStreamReceiveBufferAdjacentBlocks(QUIC_Stream_Receive_Buffer_t *
     return SUCCESS;
 }
 
-static int writeStreamReceiveBuffer(QUIC_Stream_Receive_Buffer_t *streamBuffer, const uint8_t *data, const uint32_t dataLength, const uint32_t offset) {
-    if(offset + dataLength > streamBuffer->maxReceiveOffset) { // exceed max receive window
-        DEBUG_PRINT("writeStreamReceiveBuffer: maxReceiveOffset exceeded\n");
+static int verifyStreamDataIntegrity(QUIC_Stream_Receive_Buffer_t *streamBuffer) {
+    if(streamBuffer == NULL || streamBuffer->receiveBlockList.head == NULL) { // buffer or block is null
+        DEBUG_PRINT("verifyStreamDataIntegrity: stream buffer is null.\n");
         return ERROR;
     }
+    DataBlock_t *currBlock = streamBuffer->receiveBlockList.head;
+    uint32_t expectedOffset = 0;
+    bool finFound = false;
+
+    while (currBlock != NULL) {
+        if(currBlock->offset != expectedOffset) { // some packet lost, so now, the stream's status should be QUIC_STREAM_RECEIVING_SIZE_KNOWN, waiting for retransmission
+            DEBUG_PRINT("verifyStreamDataIntegrity: data integrity error, offset not match.\n");
+            return ERROR;
+        }
+        expectedOffset += currBlock->length;
+        /* check fin */
+        if(currBlock->isFin) {
+            if(finFound) {
+                DEBUG_PRINT("verifyStreamDataIntegrity: data integrity error, multiple fin found.\n");
+                return ERROR;
+            }
+            finFound = true;
+        }
+        currBlock = currBlock->next;
+    }
+
+    /* make sure to end with a fin block */
+    if(!finFound) {
+        DEBUG_PRINT("verifyStreamDataIntegrity: data integrity error, no fin found.\n");
+        return ERROR;
+    }
+    return SUCCESS;
+}
+
+static int writeStreamReceiveBuffer(QUIC_Stream_Receive_Buffer_t *streamBuffer, const uint8_t *data, const uint32_t dataLength, const uint32_t offset, const bool isFin) {
+//    if(offset + dataLength > streamBuffer->maxReceiveOffset) { // exceed max receive window
+//        DEBUG_PRINT("writeStreamReceiveBuffer: maxReceiveOffset exceeded\n");
+//        return ERROR;
+//    }
     DataBlock_t *block = getStreamBufferDataBlock(streamBuffer, dataLength, QUIC_SERVER);
     if(block == NULL) { // no more space
         DEBUG_PRINT("writeStreamReceiveBuffer: no block available\n");
@@ -349,6 +383,7 @@ static int writeStreamReceiveBuffer(QUIC_Stream_Receive_Buffer_t *streamBuffer, 
     memcpy(block->data, data, dataLength);
     block->length = dataLength;
     block->offset = offset;
+    block->isFin = isFin;
     /* insert to the list by order */
     DataBlock_t *prev = NULL;
     DataBlock_t *curr = streamBuffer->receiveBlockList.head;
@@ -369,6 +404,7 @@ static int writeStreamReceiveBuffer(QUIC_Stream_Receive_Buffer_t *streamBuffer, 
     mergeStreamReceiveBufferAdjacentBlocks(streamBuffer);
     /* update and release stored blocks */
     updateStreamReceiveBufferConsumedOffset(streamBuffer);
+
     return (int)dataLength;
 }
 
@@ -390,66 +426,70 @@ static int quicPacketInfoNodeInit(QUIC_Packet_Info_Node_t *packetInfoNode, const
     return SUCCESS;
 }
 
-static int quicPacketInfoNodeInsert(QUIC_Packet_Info_Manager_t *packetInfoManager, QUIC_Packet_Info_Node_t *packetInfoNode) {
-    if(packetInfoManager == NULL || packetInfoNode == NULL) {
+static int quicPacketInfoNodeInsert(RBRoot_t *packetInfoRBTree, QUIC_Packet_Info_Node_t *packetInfoNode) {
+    if(packetInfoRBTree == NULL || packetInfoNode == NULL) {
         DEBUG_PRINT("quicPacketInfoNodeInsert: data not complement.\n");
         return ERROR;
     }
-    if(packetInfoNode->packetNumber <= packetInfoManager->minimumPacketUnackedNumber) {
+    QUIC_Packet_Info_Manager_t *manager = packetInfoRBTree->externResourcePtr;
+    if(packetInfoNode->packetNumber <= manager->minimumUnackedPacketNumber) {
         DEBUG_PRINT("quicPacketInfoNodeInsert: packet number is less than minimum packet acked number.\n");
         return SUCCESS;
     }
-    const int res = insertRBTree(packetInfoManager->packetInfoRBTree, (int)packetInfoNode->packetNumber, packetInfoNode, sizeof(QUIC_Packet_Info_Node_t));
+    const int res = insertRBTree(manager->packetInfoRBTree, (int)packetInfoNode->packetNumber, packetInfoNode, sizeof(QUIC_Packet_Info_Node_t));
     if(res == ERROR) {
         DEBUG_PRINT("quicPacketInfoNodeInsert: insert failed.\n");
         return ERROR;
     }
-    if(packetInfoNode->packetNumber > packetInfoManager->largestPacketNumber) packetInfoManager->largestPacketNumber = packetInfoNode->packetNumber;
-    packetInfoManager->packetInfoNodeCount++;
+    if(packetInfoNode->packetNumber > manager->largestPacketNumber) manager->largestPacketNumber = packetInfoNode->packetNumber;
+    manager->packetInfoNodeCount++;
 
     return SUCCESS;
 }
 
-static int quicPacketInfoNodeDelete(QUIC_Packet_Info_Manager_t *packetInfoManager, const uint32_t packetNumber, QUIC_Client_Conn_Item_t *clientConnItem) {
-    if (packetInfoManager == NULL) {
-        DEBUG_PRINT("quicPacketInfoNodeDelete: packetInfoManager is null.\n");
+static int quicPacketInfoNodeDelete(RBRoot_t *packetInfoRBTree, uint32_t packetNumber, uint16_t connId) {
+    if (packetInfoRBTree == NULL) {
+        DEBUG_PRINT("quicPacketInfoNodeDelete: packetInfoRBTree is null.\n");
         return ERROR;
     }
+    QUIC_Packet_Info_Manager_t *manager = packetInfoRBTree->externResourcePtr;
     /* get packet info node and delete relative buffer's block */
-    const RBNode_t *rbNode = searchRBTree(packetInfoManager->packetInfoRBTree, (int)packetNumber);
+    const RBNode_t *rbNode = searchRBTree(manager->packetInfoRBTree, (int)packetNumber);
     if(rbNode == NULL) {
         DEBUG_PRINT("quicPacketInfoNodeDelete: packet info node not found.\n");
         return ERROR;
     }
     QUIC_Packet_Info_Node_t *packetInfoNode = rbNode->data;
+    /* get connection item */
+    QUIC_Client_Conn_Item_t *clientConnItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, connId);
     /* get stream item */
     QUIC_Send_Stream_Item_t *sendStreamItem = clientConnItem->sendStreams.streamItemGet(&clientConnItem->sendStreams.streamsMap, packetInfoNode->streamId);
     /* remove the block from the unacked block list */
     ackStreamSendBuffer(&sendStreamItem->dataBuffer, packetInfoNode->offset, packetInfoNode->length);
 
     /* delete packet info node */
-    int res = deleteRBTree(packetInfoManager->packetInfoRBTree, (int)packetNumber);
+    int res = deleteRBTree(manager->packetInfoRBTree, (int)packetNumber);
     if(res == -1) {
         DEBUG_PRINT("quicPacketInfoNodeDelete: delete failed.\n");
         return ERROR;
     }
-    if(packetNumber == packetInfoManager->minimumPacketUnackedNumber) {
+    if(packetNumber == manager->minimumUnackedPacketNumber) {
         packetInfoNode = NULL; // reuse
-        res = RBTreeMinimum(packetInfoManager->packetInfoRBTree, (void **)&packetInfoNode);
+        res = RBTreeMinimum(manager->packetInfoRBTree, (void **)&packetInfoNode);
         if (res == -1) {
             DEBUG_PRINT("quicPacketInfoNodeDelete: get min packet number failed.\n");
             return ERROR;
         }
         if (res == 1) {
             DEBUG_PRINT("quicPacketInfoNodeDelete: no packet in the tree.\n"); // this means all packet acked
-            packetInfoManager->minimumPacketUnackedNumber = 0; // all packet acked
+            manager->minimumUnackedPacketNumber = 0; // all packet acked
             return SUCCESS;
         }
         if (packetInfoNode == NULL) {
             DEBUG_PRINT("quicPacketInfoNodeDelete: packetInfoNodePtr is null.\n");
             return ERROR;
         }
-        packetInfoManager->minimumPacketUnackedNumber = packetInfoNode->packetNumber;
+        manager->minimumUnackedPacketNumber = packetInfoNode->packetNumber;
     }
 
     return SUCCESS;
@@ -461,9 +501,10 @@ static int quicPacketInfoManagerInit(QUIC_Packet_Info_Manager_t *packetInfoManag
         return ERROR;
     }
     packetInfoManager->largestPacketNumber = 0; // no packet
-    packetInfoManager->minimumPacketUnackedNumber = 0; // all packet acked
+    packetInfoManager->minimumUnackedPacketNumber = 0; // all packet acked
     packetInfoManager->packetInfoNodeCount = 0;
     packetInfoManager->packetInfoRBTree = createRBTree();
+    packetInfoManager->packetInfoRBTree->externResourcePtr = packetInfoManager;
 
     packetInfoManager->packetInfoNodeInsert = quicPacketInfoNodeInsert;
     packetInfoManager->packetInfoNodeDelete = quicPacketInfoNodeDelete;
@@ -541,6 +582,10 @@ static int quicACKRangesAddGap(QUIC_ACK_Ranges_t *ackRanges, const uint16_t gap)
     if (gap == 0) {
         DEBUG_PRINT("quicACKRangesAddGap: gap is 0.\n");
         return SUCCESS;
+    }
+    if (gap > 100) { // in most case, it can not be more than 100
+        DEBUG_PRINT("quicACKRangesAddGap: gap is too large.\n");
+        return ERROR;
     }
     if(ackRanges == NULL) {
         DEBUG_PRINT("quicACKRangesAdd: ackRanges is null.\n");
@@ -667,7 +712,44 @@ static int quicACKRangesUpdateLen(QUIC_ACK_Ranges_t *ackRanges, const uint16_t p
     return SUCCESS;
 }
 
-// TODO: add ack ranges functions
+/* Stream map operations */
+static void *quicStreamItemSet(Map_t *streamsMap, void *streamItem, const uint16_t streamId, const QUIC_NODE_STATUS status) {
+    char mapKey[10] = {0};
+    itoa(streamId, mapKey, 10);
+    if (status == QUIC_CLIENT) {
+        return mapSet(streamsMap, mapKey, streamItem, sizeof(QUIC_Send_Stream_Item_t));
+    }
+    if (status == QUIC_SERVER) {
+        return mapSet(streamsMap, mapKey, streamItem, sizeof(QUIC_Read_Stream_Item_t));
+    }
+    return NULL;
+}
+
+static void quicStreamItemRemove(Map_t *streamsMap, const uint16_t streamId) {
+    char mapKey[10] = {0};
+    itoa(streamId, mapKey, 10);
+    mapRemove(streamsMap, mapKey); // TODO: may debug
+}
+
+static void *quicStreamItemGet(Map_t *streamsMap, const uint16_t streamId) {
+    char mapKey[10] = {0};
+    itoa(streamId, mapKey, 10);
+    return mapGet(streamsMap, mapKey);
+}
+
+static void quicStreamItemsMapInit(QUIC_Stream_t *streams, const QUIC_NODE_STATUS status) {
+    Map_t *streamsMap = &streams->streamsMap;
+    if (status == QUIC_CLIENT) {
+        mapInit(streamsMap, MAP_TYPE_QUIC_SEND_STREAM, MAP_COPY_ADDR, QUIC_STREAM_NUMBER_MAX,
+                sizeof(QUIC_Send_Stream_Item_t));
+    }
+    if (status == QUIC_SERVER) {
+        mapInit(streamsMap, MAP_TYPE_QUIC_READ_STREAM, MAP_COPY_ADDR, QUIC_STREAM_NUMBER_MAX,
+                sizeof(QUIC_Read_Stream_Item_t));
+    }
+    streams->streamItemSet = quicStreamItemSet;
+    streams->streamItemGet = quicStreamItemGet;
+}
 
 /* connection state machine transport */
 static int quicStateTransport(const uint16_t connId, const QUIC_NODE_STATUS status) {
@@ -692,6 +774,8 @@ static int quicStateTransport(const uint16_t connId, const QUIC_NODE_STATUS stat
             case QUIC_CLIENT_CONN_STATE_ACKNOWLEDGE_SENT:
                 if (clientConnItem->packetReceiveWindow[QUIC_INITIAL_PACKET_ACK].largestACK == 1 && clientConnItem->packetReceiveWindow[QUIC_HANDSHAKE_PACKET_ACK].largestACK == 2) {
                     clientConnItem->currentState = QUIC_CLIENT_CONN_STATE_OPEN;
+                    /* Transporting */
+                    xTaskGenericNotify(clientConnItem->userTaskHandle, 0, clientConnItem->connId, eSetValueWithOverwrite, NULL);
                 } else {
                     DEBUG_PRINT("In quicStateTransport: current client connection state is acknowledge sent, but transport condition is not right.\n");
                 }
@@ -737,18 +821,19 @@ static int quicStateTransport(const uint16_t connId, const QUIC_NODE_STATUS stat
     return SUCCESS;
 }
 
-static void quicConnItemSet(Map_t *connItemsMap, const uint16_t connId, void *connItem, const QUIC_NODE_STATUS status) {
+/* Connection map operations */
+static void *quicConnItemSet(Map_t *connItemsMap, const uint16_t connId, void *connItem, const QUIC_NODE_STATUS status) {
     char mapKey[10] = {0};
     itoa(connId, mapKey, 10);
     if (status == QUIC_CLIENT) {
-        mapSet(connItemsMap, mapKey, connItem, sizeof(QUIC_Client_Conn_Item_t));
+        return mapSet(connItemsMap, mapKey, connItem, sizeof(QUIC_Client_Conn_Item_t));
     }
     if (status == QUIC_SERVER) {
-        mapSet(connItemsMap, mapKey, connItem, sizeof(QUIC_Server_Conn_Item_t));
+        return mapSet(connItemsMap, mapKey, connItem, sizeof(QUIC_Server_Conn_Item_t));
     }
 }
 
-static void *quicConnItemGet(const Map_t *connItemsMap, const uint16_t connId) {
+static void *quicConnItemGet(Map_t *connItemsMap, const uint16_t connId) {
     char mapKey[10] = {0};
     itoa(connId, mapKey, 10);
     return mapGet(connItemsMap, mapKey);
@@ -766,24 +851,39 @@ static void quicConnItemsMapInit(QUIC_Conn_t *conn, const QUIC_NODE_STATUS statu
     conn->connItemGet = quicConnItemGet;
 }
 
+/* Tx task */
 static void quicTxTask() {
     systemWaitStart();
 
-    while(true)
-    {
-#ifdef QUIC_TEST_CLIENT
-        quicClientSendConnRequest(0);
-#endif
-        vTaskDelay(M2T(3000));
+    int pos = 0;
+    while(true) {
+        if(quicClientNode.isOpen) {
+            for (; pos < QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT; pos++) {
+                if (quicClientNode.transportInfo[pos].connectionID != 0) {
+                    quicClientSendData(quicClientNode.transportInfo[pos].connectionID,
+                                       quicClientNode.transportInfo[pos].streamID); // the stream is running, then get data from buffer, and send it
+                    break;
+                }
+            }
+            pos++;
+            if (pos >= QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT) pos = 0;
+        }
+        vTaskDelay(M2T(1));
     }
 }
 
+/* Rx task */
 static void quicRxTask() {
     systemWaitStart();
 
     UWB_Data_Packet_t dataRxPacket;
     while(true) {
         if(uwbReceiveDataPacketBlock(UWB_DATA_MESSAGE_QUIC, &dataRxPacket)) {
+            if(!quicServerNode.isOpen) {
+                // TODO: send message to client, server is not open
+                vTaskDelay(M2T(1));
+                continue;
+            }
             /* We may receive packet as client or server */
             DEBUG_PRINT("Received QUIC packet from %u\n", dataRxPacket.header.srcAddress);
             const UWB_Address_t peer = dataRxPacket.header.srcAddress;
@@ -821,7 +921,8 @@ static void quicRxTask() {
                     }
                 }
                 if (headerForm == QUIC_SHORT_HEADER){
-                    // Quic_One_RTT_Packet_t *packet = (Quic_One_RTT_Packet_t *) &dataRxPacket.payload[curPosLen];
+                     Quic_One_RTT_Packet_t *packet = (Quic_One_RTT_Packet_t *) &dataRxPacket.payload[curPosLen];
+                     packetOffset = quicProcessOneRTTPacket(packet);
                 }
                 error = packetOffset == ERROR;
                 if (error) break;
@@ -882,6 +983,8 @@ static void quicRxTask() {
 
 void quicInit() {
     rxPacketQueue = xQueueCreate(QUIC_RX_PACKET_QUEUE_SIZE, QUIC_RX_PACKET_ITEM_SIZE);
+    streamNotifyQueue = xQueueCreate(QUIC_STREAM_NOTIFY_QUEUE_SIZE, QUIC_STREAM_NOTIFY_QUEUE_ITEM_SIZE);
+
     quicConnIdMutex = xSemaphoreCreateMutex();
     quicStreamIdMutex = xSemaphoreCreateMutex();
     UWB_Data_Packet_Listener_t listener = {
@@ -895,16 +998,17 @@ void quicInit() {
     quicClientNode.mu = xSemaphoreCreateMutex();
     quicClientNode.conns.size = 0;
     quicClientNode.conns.capacity = QUIC_CONNECTION_NUMBER_MAX;
+    quicClientNode.isOpen = false;
     quicConnItemsMapInit(&quicClientNode.conns, QUIC_CLIENT);
     // If I receive a packet from client, or send a packet to client, then I am server
     quicServerNode.me = uwbGetAddress();
     quicServerNode.mu = xSemaphoreCreateMutex();
     quicServerNode.conns.size = 0;
     quicServerNode.conns.capacity = QUIC_CONNECTION_NUMBER_MAX;
+    quicServerNode.isOpen = false;
     quicConnItemsMapInit(&quicServerNode.conns, QUIC_SERVER);
 
     xTaskCreate(quicRxTask, ADHOC_DECK_QUIC_RX_TASK_NAME, UWB_TASK_STACK_SIZE, NULL, ADHOC_DECK_TASK_PRI, &quicRxTaskHandle);
-    /* Test */
     xTaskCreate(quicTxTask, ADHOC_DECK_QUIC_TX_TASK_NAME, UWB_TASK_STACK_SIZE, NULL, ADHOC_DECK_TASK_PRI, &quicTxTaskHandle);
 }
 
@@ -940,15 +1044,17 @@ int quicHandleHelloFrame(const Quic_Long_Packet_t *packet, const UWB_Address_t p
         return ERROR;
     }
     /* Create new connection for client */
-    QUIC_Server_Conn_Item_t connItem = {0};
-    connItem.peer = peer;
-    connItem.connId = getNextSrcConnId();
-    connItem.currentState = QUIC_SERVER_CONN_STATE_INITIAL;
-    connItem.dstConnId = packet->header.srcConnId;
-    quicServerNode.conns.connItemSet(&quicServerNode.conns.connItemsMap, connItem.connId, &connItem, QUIC_SERVER);
+    QUIC_Server_Conn_Item_t connItem_ = {0};
+    connItem_.peer = peer;
+    connItem_.connId = getNextSrcConnId();
+    connItem_.currentState = QUIC_SERVER_CONN_STATE_INITIAL;
+    connItem_.dstConnId = packet->header.srcConnId;
+    connItem_.minimumStreamId = 0;
+    QUIC_Client_Conn_Item_t *connItem = quicServerNode.conns.connItemSet(&quicServerNode.conns.connItemsMap, connItem_.connId, &connItem_, QUIC_SERVER);
+    quicStreamItemsMapInit(&connItem->sendStreams, QUIC_SERVER);
     quicServerNode.conns.size++;
 
-    quicTempSrcConnId = connItem.connId; /* Will be used when server reply */
+    quicTempSrcConnId = connItem->connId; /* Will be used when server reply */
     /* Calculate length and return */
     return sizeof(Quic_Type_Frame_t);
 }
@@ -1216,8 +1322,15 @@ int quicGenerateStreamFrame(Quic_One_RTT_Packet_t *packet, const uint16_t frameP
     /* Generate frame header */
     Quic_Stream_Frame_t *frame = (Quic_Stream_Frame_t *) &packet->packetPayload[framePos];
     memset(frame, 0, sizeof(Quic_Stream_Frame_Header_t));
-    frame->header.type = sendingData.isFin ? QUIC_FRAME_STREAM_FIN : QUIC_FRAME_STREAM; /* stream or stream fin */
-    frame->header.streamID = getNextStreamId();
+    if (streamItem->isHeadStream) {
+        frame->header.type = sendingData.isFin ? QUIC_FRAME_STREAM_HEAD_FIN : QUIC_FRAME_STREAM_HEAD; // be sliced but only send one packet is not possible
+    } else {
+        frame->header.type = sendingData.isFin ? QUIC_FRAME_STREAM_FIN : QUIC_FRAME_STREAM; /* stream or stream fin */
+    }
+    if (!streamItem->isHeadStream) {
+        frame->header.preStreamID = streamItem->preStreamID;
+    }
+    frame->header.streamID = streamID;
     frame->header.offset = sendingData.offset;
     frame->header.length = sizeof(Quic_Stream_Frame_Header_t) + payloadLength;
     /* Write payload */
@@ -1234,6 +1347,12 @@ int quicHandleStreamFrame(const Quic_One_RTT_Packet_t *packet, const int pos){
     /* Get stream from connection item */
     QUIC_Server_Conn_Item_t *connItem = quicServerNode.conns.connItemGet(&quicServerNode.conns.connItemsMap, packet->header.dstConnId);
     QUIC_Read_Stream_Item_t *streamItem = connItem->readStreams.streamItemGet(&connItem->readStreams.streamsMap, frame->header.streamID);
+
+    bool isFin = false;
+    if (frame->header.type == QUIC_FRAME_STREAM_FIN || frame->header.type == QUIC_FRAME_STREAM_HEAD_FIN) {
+        isFin = true;
+    }
+
     if(streamItem == NULL) {
         QUIC_Read_Stream_Item_t streamItem_ = {0};
         streamItem_.streamId = frame->header.streamID;
@@ -1242,19 +1361,102 @@ int quicHandleStreamFrame(const Quic_One_RTT_Packet_t *packet, const int pos){
         streamItem_.dataBuffer.receiveBlockList.count = 0;
         streamItem_.dataBuffer.readOffset = 0;
         streamItem_.dataBuffer.consumedOffset = 0;
-        streamItem_.dataBuffer.maxReceiveOffset = QUIC_INITIAL_MAX_STREAM_DATA_UNI_DEFAULT;
+//        streamItem_.dataBuffer.maxReceiveOffset = QUIC_INITIAL_MAX_STREAM_DATA_UNI_DEFAULT;
         streamItem_.dataBuffer.freeBlocks = NULL;
         streamItem_.dataBuffer.receivedFin = false;
-        streamItem = connItem->readStreams.streamItemSet(&connItem->readStreams.streamsMap, &streamItem_, frame->header.streamID);
+        streamItem_.dataBuffer.isIntegrity = false;
+        streamItem_.connItemPtr = (struct QUIC_Server_Conn_Item_t *)connItem;
+        if (frame->header.type == QUIC_FRAME_STREAM_HEAD || frame->header.type == QUIC_FRAME_STREAM_HEAD_FIN) {
+            streamItem_.isHeadStream = true;
+        }
+        if (!streamItem_.isHeadStream) {
+            streamItem_.preStreamID = frame->header.preStreamID;
+            QUIC_Read_Stream_Item_t *prevStreamItem = connItem->readStreams.streamItemGet(&connItem->readStreams.streamsMap, streamItem_.preStreamID);
+            if (prevStreamItem != NULL) {
+                streamItem_.dataBuffer.prevDataBuffer = (struct QUIC_Stream_Receive_Buffer_t *)&prevStreamItem->dataBuffer;
+                prevStreamItem->dataBuffer.nextDataBuffer = (struct QUIC_Stream_Receive_Buffer_t *)&streamItem_.dataBuffer;
+            }
+        } else {
+            streamItem_.preStreamID = 0;
+            streamItem_.dataBuffer.nextDataBuffer = NULL;
+            streamItem_.dataBuffer.prevDataBuffer = NULL;
+        }
+        streamItem = connItem->readStreams.streamItemSet(&connItem->readStreams.streamsMap, &streamItem_, frame->header.streamID, QUIC_SERVER);
+        streamItem->readReceiveBuffer = readStreamReceiveBuffer;
+        streamItem->writeReceiveBuffer = writeStreamReceiveBuffer;
+        streamItem->receivingStatus = QUIC_STREAM_RECEIVING_RECEIVE;
         if(streamItem == NULL) {
             DEBUG_PRINT("Error in quicHandleStreamFrame, create new stream item failed, space is not enough.\n");
             return ERROR;
         }
         assert(streamItem != NULL);
+    } else if (!streamItem->isHeadStream && streamItem->preStreamID > 0 && streamItem->dataBuffer.prevDataBuffer == NULL) { // because previous stream may not be created yet (packet has not received yet), so we need to check, and set pointers
+        QUIC_Read_Stream_Item_t *prevStreamItem = connItem->readStreams.streamItemGet(&connItem->readStreams.streamsMap, streamItem->preStreamID);
+        if (prevStreamItem != NULL) {
+            streamItem->dataBuffer.prevDataBuffer = (struct QUIC_Stream_Receive_Buffer_t *)&prevStreamItem->dataBuffer;
+            prevStreamItem->dataBuffer.nextDataBuffer = (struct QUIC_Stream_Receive_Buffer_t *)&streamItem->dataBuffer;
+        }
     }
-    streamItem->writeReceiveBuffer(&streamItem->dataBuffer, &frame->data[0], frame->header.length - sizeof(Quic_Stream_Frame_Header_t), frame->header.offset);
-    // TODO: stream fin handle may modify
-    if (frame->header.type == QUIC_FRAME_STREAM_FIN) streamItem->dataBuffer.receivedFin = true;
+
+    streamItem->writeReceiveBuffer(&streamItem->dataBuffer, &frame->data[0], frame->header.length - sizeof(Quic_Stream_Frame_Header_t), frame->header.offset, isFin);
+    if (streamItem->receivingStatus == QUIC_STREAM_RECEIVING_SIZE_KNOWN) {
+        /* check data integrity and notify the user layer if it is complete */
+        if(verifyStreamDataIntegrity(&streamItem->dataBuffer)) {
+            streamItem->receivingStatus = QUIC_STREAM_RECEIVING_DATA_RECEIVED;
+            streamItem->dataBuffer.isIntegrity = true;
+            /* check, if the stream is head or not, | Stream Head | <--> | Stream | <--> | Stream | -no ptr- | Stream | */
+            if (streamItem->isHeadStream) { // because we need to prove the data sequence
+                /* notify transport layer, stream data is ready */
+                QUIC_Transport_Info_t transportInfo = {0};
+                transportInfo.peer = connItem->peer;
+                transportInfo.connectionID = connItem->connId;
+                transportInfo.streamID = streamItem->streamId;
+                xQueueSend(streamNotifyQueue, &transportInfo, 0);
+            } else {
+                QUIC_Read_Stream_Item_t *prevStreamItem = NULL;
+                do {
+                    prevStreamItem = connItem->readStreams.streamItemGet(&connItem->readStreams.streamsMap, streamItem->preStreamID);
+                } while(prevStreamItem != NULL && !prevStreamItem->isHeadStream);
+                if(prevStreamItem != NULL && prevStreamItem->dataBuffer.isIntegrity) {
+                    QUIC_Transport_Info_t transportInfo = {0};
+                    transportInfo.peer = connItem->peer;
+                    transportInfo.connectionID = connItem->connId;
+                    transportInfo.streamID = prevStreamItem->streamId;
+                    xQueueSend(streamNotifyQueue, &transportInfo, 0);
+                }
+            }
+        }
+    }
+    if (isFin) {
+        streamItem->dataBuffer.receivedFin = true;
+        streamItem->receivingStatus = QUIC_STREAM_RECEIVING_SIZE_KNOWN;
+        /* check data integrity and notify the user layer if it is complete */
+        if(verifyStreamDataIntegrity(&streamItem->dataBuffer)) {
+            streamItem->receivingStatus = QUIC_STREAM_RECEIVING_DATA_RECEIVED;
+            streamItem->dataBuffer.isIntegrity = true;
+            /* check, if the stream is head or not, | Stream Head | <--> | Stream | <--> | Stream | -no ptr- | Stream | */
+            if (streamItem->isHeadStream) { // because we need to prove the data sequence
+                /* notify transport layer, stream data is ready */
+                QUIC_Transport_Info_t transportInfo = {0};
+                transportInfo.peer = connItem->peer;
+                transportInfo.connectionID = connItem->connId;
+                transportInfo.streamID = streamItem->streamId;
+                xQueueSend(streamNotifyQueue, &transportInfo, 0);
+            } else {
+                QUIC_Read_Stream_Item_t *prevStreamItem = NULL;
+                do {
+                    prevStreamItem = connItem->readStreams.streamItemGet(&connItem->readStreams.streamsMap, streamItem->preStreamID);
+                } while(prevStreamItem != NULL && !prevStreamItem->isHeadStream);
+                if(prevStreamItem != NULL && prevStreamItem->dataBuffer.isIntegrity) {
+                    QUIC_Transport_Info_t transportInfo = {0};
+                    transportInfo.peer = connItem->peer;
+                    transportInfo.connectionID = connItem->connId;
+                    transportInfo.streamID = prevStreamItem->streamId;
+                    xQueueSend(streamNotifyQueue, &transportInfo, 0);
+                }
+            }
+        }
+    }
 
     return (int)frame->header.length;
 }
@@ -1300,7 +1502,10 @@ int quicGenerateOneRTTPacketACKFrame(Quic_One_RTT_Packet_t *packet, const uint16
     return (int) sizeof(Quic_ACK_Frame_Header_t) + frame->header.ACKRangeCount * (int) sizeof(Quic_ACK_Range_t);
 }
 
-/* Only client will use this function,  */
+/* Only client will use this function.
+ * 1. Make all packet that number less than minimum acked packet number segment in ack frame be acked.
+ * 2. Make all packet that acked (in 'len') in the ranges be acked locally.
+ */
 int quicHandleOneRTTPacketACKFrame(const Quic_One_RTT_Packet_t *packet, const int pos) {
     /* get ack frame */
     const Quic_ACK_Frame_t *frame = (Quic_ACK_Frame_t *) &packet->packetPayload[pos];
@@ -1308,15 +1513,20 @@ int quicHandleOneRTTPacketACKFrame(const Quic_One_RTT_Packet_t *packet, const in
     /* get client connection item */
     QUIC_Client_Conn_Item_t *connItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, packet->header.dstConnId);
     /* make all packet that number less than minAckedPacketNumber be acked */
-    while (connItem->packetInfoManager.minimumPacketUnackedNumber <= minAckedPacketNumber) {
-        connItem->packetInfoManager.packetInfoNodeDelete((struct QUIC_Packet_Info_Manager_t*)&connItem->packetInfoManager, connItem->packetInfoManager.minimumPacketUnackedNumber, (struct QUIC_Client_Conn_Item_t*)connItem);
-        connItem->packetInfoManager.minimumPacketUnackedNumber++;
+    while (connItem->packetInfoManager.minimumUnackedPacketNumber <= minAckedPacketNumber) { // packet number == minimum ack number, will be acked
+        connItem->packetInfoManager.packetInfoNodeDelete(connItem->packetInfoManager.packetInfoRBTree, connItem->packetInfoManager.minimumUnackedPacketNumber, connItem->connId);
+        connItem->packetInfoManager.minimumUnackedPacketNumber++;
     }
     /* ack packets that server has received */
-    for (int i = 0; i < frame->header.ACKRangeCount; i++) {
+    uint32_t toAckedPacketNumber = connItem->packetInfoManager.minimumUnackedPacketNumber;
+    for (int i = 0; i < frame->header.ACKRangeCount; i++) { // start with (minimum ack number + 1)
         int gap = frame->ACKRange[i].gap;
         int len = frame->ACKRange[i].ackRangeLength;
-        // TODO: now
+        toAckedPacketNumber += gap; // position is the start of 'len'
+        for(int j = 0; j < len; j++) { // handle every packet need to acked in 'len'
+            connItem->packetInfoManager.packetInfoNodeDelete(connItem->packetInfoManager.packetInfoRBTree, toAckedPacketNumber + j, connItem->connId);
+        }
+        toAckedPacketNumber += len; // position is the start of next range part
     }
 
     return SUCCESS;
@@ -1525,6 +1735,14 @@ int quicProcessOneRTTPacket(const Quic_One_RTT_Packet_t *oneRTTPacket) {
             DEBUG_PRINT("quicProcessOneRTTPacket: handle stream fin frame.\n");
             frameOffset = quicHandleStreamFrame(oneRTTPacket, curPosLen);
             break;
+        case QUIC_FRAME_STREAM_HEAD:
+            DEBUG_PRINT("quicProcessOneRTTPacket: handle head stream frame.\n");
+            frameOffset = quicHandleStreamFrame(oneRTTPacket, curPosLen);
+            break;
+        case QUIC_FRAME_STREAM_HEAD_FIN:
+            DEBUG_PRINT("quicProcessOneRTTPacket: handle head stream fin frame.\n");
+            frameOffset = quicHandleStreamFrame(oneRTTPacket, curPosLen);
+            break;
         case QUIC_FRAME_ACK:
             DEBUG_PRINT("quicProcessOneRTTPacket: handle ack frame.\n");
             // Only client need it
@@ -1540,19 +1758,19 @@ int quicProcessOneRTTPacket(const Quic_One_RTT_Packet_t *oneRTTPacket) {
     }
     /* Receive ack handle, only server need it */
     if (oneRTTPacket->header.status == QUIC_CLIENT) {
-        QUIC_Client_Conn_Item_t *connItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, oneRTTPacket->header.dstConnId);
+        QUIC_Server_Conn_Item_t *connItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, oneRTTPacket->header.dstConnId);
         if (connItem == NULL) {
             DEBUG_PRINT("quicProcessOneRTTPacket: Error in process handshake packet, connection item is not exist.\n");
             return ERROR;
         }
-        if (oneRTTPacket->header.packetNumber > connItem->packetReceiveWindow[QUIC_ONE_RTT_PACKET_ACK].largestACK) {
+        if (oneRTTPacket->header.packetNumber > connItem->packetReceiveWindow[QUIC_ONE_RTT_PACKET_ACK].largestACK) { // when packet number > largestACK, that means packet between largestACK and packet number (largestACK, packetNumber) are lost
             quicACKRangesAddGap(connItem->packetReceiveWindow[QUIC_ONE_RTT_PACKET_ACK].ackRanges, oneRTTPacket->header.packetNumber - connItem->packetReceiveWindow[QUIC_ONE_RTT_PACKET_ACK].largestACK - 1);
             connItem->packetReceiveWindow[QUIC_ONE_RTT_PACKET_ACK].largestACK = oneRTTPacket->header.packetNumber;
         }
-        else if (oneRTTPacket->header.packetNumber == connItem->packetReceiveWindow[QUIC_ONE_RTT_PACKET_ACK].largestACK) {
+        else if (oneRTTPacket->header.packetNumber == connItem->packetReceiveWindow[QUIC_ONE_RTT_PACKET_ACK].largestACK) { // packet number == largestACK, no need to handle
             DEBUG_PRINT("quicProcessOneRTTPacket: packet number is equal to the largestACK, no need to handle.\n");
         }
-        else { // packet number < largestACK
+        else { // packet number < largestACK, that means the packet should be acked
             const int res = quicACKRangesUpdateLen(connItem->packetReceiveWindow[QUIC_ONE_RTT_PACKET_ACK].ackRanges, oneRTTPacket->header.packetNumber - connItem->packetReceiveWindow[QUIC_ONE_RTT_PACKET_ACK].minimumACK - 1);
             if (res == ERROR) {
                 DEBUG_PRINT("quicProcessOneRTTPacket: Error in update ACK ranges.\n");
@@ -1566,7 +1784,7 @@ int quicProcessOneRTTPacket(const Quic_One_RTT_Packet_t *oneRTTPacket) {
 }
 
 /* Message Operations */
-int quicClientSendConnRequest(const UWB_Address_t peer) {
+int quicClientSendConnRequest(const UWB_Address_t peer, TaskHandle_t userTaskHandle) {
     /* Steps:
      * 1. Generate initial packet
      * 2. Generate Hello frame
@@ -1593,11 +1811,11 @@ int quicClientSendConnRequest(const UWB_Address_t peer) {
     connItem_.dstConnId = dstConnId;
     connItem_.currentState = QUIC_CLIENT_CONN_STATE_INITIAL;
     connItem_.peer = peer;
+    connItem_.userTaskHandle = userTaskHandle;
     /* since memset, packetTuples are already set 0. */
-    quicClientNode.conns.connItemSet(&quicClientNode.conns.connItemsMap, srcConnId, &connItem_, QUIC_CLIENT);
+    QUIC_Client_Conn_Item_t *connItem = quicClientNode.conns.connItemSet(&quicClientNode.conns.connItemsMap, srcConnId, &connItem_, QUIC_CLIENT);
+    quicStreamItemsMapInit(&connItem->sendStreams, QUIC_CLIENT);
     quicClientNode.conns.size++;
-    /* Find connection with peer */
-    QUIC_Client_Conn_Item_t *connItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, srcConnId);
     /* Generate packets */
     int packetPos = 0;
     /* Generate initial packet */
@@ -1784,26 +2002,9 @@ int quicClientSendData(const uint16_t connID, const uint16_t streamID) {
     /* Generate stream frame */
     /* check stream ID is exist or not, if exists, get the stream item, if not, then create a new stream */
     const QUIC_Send_Stream_Item_t *streamItem = connItem->sendStreams.streamItemGet(&connItem->sendStreams.streamsMap, streamID);
-    // TODO: modify code, in upper layer, we need to check whether the stream is exist or not
     if (streamItem == NULL) { // before send data, stream item and data have been created anyway
-        QUIC_Send_Stream_Item_t streamItem_ = {0};
-        streamItem_.streamId = streamID;
-        streamItem_.dataBuffer.pendingBlockList.head = NULL;
-        streamItem_.dataBuffer.pendingBlockList.tail = NULL;
-        streamItem_.dataBuffer.pendingBlockList.count = 0;
-        streamItem_.dataBuffer.unackedBlockList.head = NULL;
-        streamItem_.dataBuffer.unackedBlockList.tail = NULL;
-        streamItem_.dataBuffer.unackedBlockList.count = 0;
-        streamItem_.dataBuffer.freeBlocks = NULL;
-        streamItem_.dataBuffer.maxSendOffset = QUIC_INITIAL_MAX_STREAM_DATA_UNI_DEFAULT;
-        streamItem_.dataBuffer.sendOffset = 0;
-        streamItem_.dataBuffer.sentFin = false;
-        streamItem = connItem->sendStreams.streamItemSet(&connItem->sendStreams.streamsMap, &streamItem_, streamID);
-        if (streamItem == NULL) {
-            DEBUG_PRINT("Error in quicClientSendData, create new stream item failed, space is not enough.");
-            return ERROR;
-        }
-        assert(streamItem != NULL);
+        DEBUG_PRINT("Error in quicClientSendData, stream item is not exist.");
+        return ERROR;
     }
     /* write data to stream frame */
     const uint32_t restLength = QUIC_ONE_RTT_PACKET_PAYLOAD_SIZE_MAX - sizeof(Quic_Short_Packet_Header_t);
@@ -1815,11 +2016,215 @@ int quicClientSendData(const uint16_t connID, const uint16_t streamID) {
     QUIC_Packet_Info_Node_t packetInfoNode = {0};
     quicPacketInfoNodeInit(&packetInfoNode, oneRTTPacket, streamItem);
     QUIC_Packet_Info_Manager_t *packetInfoManager = &connItem->packetInfoManager;
-    packetInfoManager->packetInfoNodeInsert((struct QUIC_Packet_Info_Manager_t*)&packetInfoManager, &packetInfoNode);
+    packetInfoManager->packetInfoNodeInsert(packetInfoManager->packetInfoRBTree, &packetInfoNode);
     /* Send packet */
     DEBUG_PRINT("quicClientSendData: send data packet.\n");
     uwbSendDataPacketBlock(&dataTxPacket);
     /* return */
+    return SUCCESS;
+}
+
+/* Stream operations */
+/*
+ * Create a new stream in the connection.
+ * @param connID: connection ID
+ * @return: stream ID
+ */
+int quicSendStreamCreate(uint16_t connID, bool isHeadStream, uint16_t preStreamID) {
+    /* get connection item first */
+    QUIC_Client_Conn_Item_t *connItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, connID);
+    if (connItem == NULL) {
+        DEBUG_PRINT("Error in quicSendStreamCreate, connection item is not exist.");
+        return ERROR;
+    }
+    /* check if over largest stream number */
+    if (connItem->sendStreams.size + 1 >= QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT) {
+        DEBUG_PRINT("Error in quicSendStreamCreate, stream number is over the largest stream number.");
+        return ERROR;
+    }
+    /* create a new stream */
+    QUIC_Send_Stream_Item_t streamItem_ = {0};
+    uint16_t streamID = getNextStreamId();
+    streamItem_.streamId = streamID;
+    streamItem_.dataBuffer.pendingBlockList.head = NULL;
+    streamItem_.dataBuffer.pendingBlockList.tail = NULL;
+    streamItem_.dataBuffer.pendingBlockList.count = 0;
+    streamItem_.dataBuffer.unackedBlockList.head = NULL;
+    streamItem_.dataBuffer.unackedBlockList.tail = NULL;
+    streamItem_.dataBuffer.unackedBlockList.count = 0;
+    streamItem_.dataBuffer.freeBlocks = NULL;
+    streamItem_.dataBuffer.maxSendOffset = 0;
+    streamItem_.dataBuffer.sendOffset = 0;
+    streamItem_.dataBuffer.sentFin = false;
+    streamItem_.writeSendBuffer = writeStreamSendBuffer;
+    streamItem_.readSendBuffer = readStreamSendBuffer;
+    streamItem_.isHeadStream = isHeadStream;
+    streamItem_.preStreamID = preStreamID;
+    QUIC_Send_Stream_Item_t *streamItem = connItem->sendStreams.streamItemSet(&connItem->sendStreams.streamsMap, &streamItem_, streamID, QUIC_CLIENT);
+    streamItem->sendingStatus = QUIC_STREAM_SENDING_READY;
+    if (streamItem == NULL) {
+        DEBUG_PRINT("Error in quicSendStreamCreate, create new stream item failed, space is not enough.");
+        return ERROR;
+    }
+    connItem->sendStreams.size++;
+
+    return streamID;
+}
+
+/*
+ *  write data to the stream buffer, slice data into suitable size, and write it to buffer block
+ *  @param connID: connection ID
+ *  @param streamID: stream ID
+ *  @param data: data to write
+ *  @param len: data length
+ *  @param isLastSegment: is the last segment, if it is, then in lower layer will set fin flag
+ *  @return: SUCCESS or ERROR
+ */
+int quicSendStreamWrite(uint16_t connID, uint16_t streamID, const uint8_t *data, const uint32_t len, bool isLastSegment) {
+    /* get connection item first */
+    QUIC_Client_Conn_Item_t *connItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, connID);
+    if (connItem == NULL) {
+        DEBUG_PRINT("Error in quicSendStreamWrite, connection item is not exist.");
+        return ERROR;
+    }
+    /* get stream item */
+    QUIC_Send_Stream_Item_t *streamItem = connItem->sendStreams.streamItemGet(&connItem->sendStreams.streamsMap, streamID);
+    if (streamItem == NULL) {
+        DEBUG_PRINT("Error in quicSendStreamWrite, stream item is not exist.");
+        return ERROR;
+    }
+    /* write data to stream buffer, slice data into suitable size, and write it to buffer block */
+    uint32_t restLen = len;
+    uint32_t curPos = 0;
+    while (restLen > 0) {
+        uint32_t writeLen = restLen > QUIC_STREAM_DATA_BLOCK_MAX_DATA_SIZE ? QUIC_STREAM_DATA_BLOCK_MAX_DATA_SIZE : restLen; // slice data into suitable size, the size is fixed by QUIC_STREAM_DATA_BLOCK_SIZE
+        xSemaphoreTake(quicClientNode.mu, portMAX_DELAY);
+        if (restLen == writeLen && isLastSegment == true) { // judge if it is the last block, if it is, then set fin flag
+            if (streamItem->writeSendBuffer(&streamItem->dataBuffer, data + curPos, writeLen, true) == ERROR) {
+                DEBUG_PRINT("Error in quicStreamWrite, write data to stream buffer failed.");
+                xSemaphoreGive(quicClientNode.mu);
+                return ERROR;
+            }
+            xSemaphoreGive(quicClientNode.mu);
+        } else { // else just write data to buffer
+            if (streamItem->writeSendBuffer(&streamItem->dataBuffer, data + curPos, writeLen, false) == ERROR) {
+                DEBUG_PRINT("Error in quicStreamWrite, write data to stream buffer failed.");
+                xSemaphoreGive(quicClientNode.mu);
+                return ERROR;
+            }
+        }
+        xSemaphoreGive(quicClientNode.mu);
+
+        restLen -= writeLen;
+        curPos += writeLen;
+    }
+
+    return SUCCESS;
+}
+
+int quicReceiveStreamRead(uint16_t connectionId, uint16_t streamId, uint8_t *cache, uint32_t len) {
+    /* get connection item first */
+    QUIC_Server_Conn_Item_t *connItem = quicServerNode.conns.connItemGet(&quicServerNode.conns.connItemsMap, connectionId);
+    if (connItem == NULL) {
+        DEBUG_PRINT("Error in quicReceiveStreamRead, connection item is not exist.");
+        return ERROR;
+    }
+    /* get stream item */
+    QUIC_Read_Stream_Item_t *streamItem = connItem->readStreams.streamItemGet(&connItem->readStreams.streamsMap, streamId);
+    if (streamItem == NULL) {
+        DEBUG_PRINT("Error in quicReceiveStreamRead, stream item is not exist.");
+        return ERROR;
+    }
+    /* read data from stream buffer */
+    uint32_t restLen = len;
+    uint32_t curPos = 0;
+    int res = SUCCESS;
+    QUIC_Stream_Receive_Buffer_t *dataBuffer = &streamItem->dataBuffer;
+    do {
+        if (!dataBuffer->isIntegrity) {
+            return 1; // last stream's all data is read ready, but the rear stream's data is not complete, we still think data continuous streams in front are done
+        }
+        xSemaphoreTake(quicServerNode.mu, portMAX_DELAY);
+        res = streamItem->readReceiveBuffer(dataBuffer, cache + curPos, restLen); // the res is total read len
+        xSemaphoreGive(quicServerNode.mu);
+        if (res == ERROR) {
+            DEBUG_PRINT("Error in quicReceiveStreamRead, read data from stream buffer failed.");
+            return ERROR;
+        }
+        restLen -= res;
+        curPos += res;
+        streamItem->dataBuffer.consumedOffset += res;
+        if(restLen == 0) break;
+        dataBuffer = (QUIC_Stream_Receive_Buffer_t *)dataBuffer->nextDataBuffer;
+    } while (dataBuffer != NULL);
+
+    if (dataBuffer == NULL) return 1; // 1 means all data in this stream group is done, sliced but not even send one packet is no possible
+    return 0;
+}
+
+/*
+ *  add stream info to the transport info, let client node know which stream is sending data
+ *  @param connID: connection ID
+ *  @param streamID: stream ID
+ *  @return: SUCCESS or ERROR
+ */
+int quicTransformInfoAdd(uint16_t connID, uint16_t streamID) {
+    int index;
+    for(index = 0; index < QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT; index++) {
+        if(quicClientNode.transportInfo[index].connectionID == 0) {
+            quicClientNode.transportInfo[index].connectionID = connID;
+            quicClientNode.transportInfo[index].streamID = streamID;
+            break;
+        }
+    }
+    if(index == QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT) {
+        DEBUG_PRINT("Error in quicTransformInfoAdd, stream number is over the largest stream number.");
+        return ERROR;
+    }
+    return SUCCESS;
+}
+
+/*
+ *  delete stream info from the transport info, let client node know which stream is done
+ *  @param connID: connection ID
+ *  @param streamID: stream ID
+ *  @return: SUCCESS or ERROR
+ */
+int quicTransformInfoDelete(uint16_t connID, uint16_t streamID) {
+    int index;
+    for(index = 0; index < QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT; index++) {
+        if(quicClientNode.transportInfo[index].connectionID == connID && quicClientNode.transportInfo[index].streamID == streamID) {
+            quicClientNode.transportInfo[index].connectionID = 0;
+            quicClientNode.transportInfo[index].streamID = 0;
+            break;
+        }
+    }
+    if(index == QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT) {
+        DEBUG_PRINT("Error in quicTransformInfoDelete, stream info is not exist.");
+        return ERROR;
+    }
+    return SUCCESS;
+}
+
+/*
+ * delete stream item from the stream map, let client node know which stream is done
+ * @param connID: connection ID
+ * @param streamID: stream ID
+ * @return: SUCCESS or ERROR
+ */
+int quicReceiveStreamClose(uint16_t connectionId, uint16_t streamId) {
+    /* get connection */
+    /* get connection item first */
+    QUIC_Server_Conn_Item_t *connItem = quicServerNode.conns.connItemGet(&quicServerNode.conns.connItemsMap, connectionId);
+    if (connItem == NULL) {
+        DEBUG_PRINT("Error in quicReceiveStreamRead, connection item is not exist.");
+        return ERROR;
+    }
+    /* remove stream item */
+    xSemaphoreTake(quicServerNode.mu, portMAX_DELAY);
+    quicStreamItemRemove(&connItem->readStreams.streamsMap, streamId);
+    xSemaphoreGive(quicServerNode.mu);
+
     return SUCCESS;
 }
 
@@ -1833,4 +2238,6 @@ int quicClientSendData(const uint16_t connID, const uint16_t streamID) {
 
 // TODO: latest, coding 1-RTT packet, now coding receive part
 // TODO: latest, timer, that send ack frame
-// TODO: latest, in quicHandleOneRTTPacketACKFrame, handle ack frame, and update packet info
+// TODO: code review, 1-RTT Send and receive
+// TODO: code transform layer
+// TODO: duplicate packet handle

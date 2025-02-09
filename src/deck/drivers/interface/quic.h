@@ -1,5 +1,5 @@
-#ifndef __QUIC_H__
-#define __QUIC_H__
+#ifndef QUIC_H_
+#define QUIC_H_
 
 #include <stdint.h>
 #include <quicTools.h>
@@ -13,16 +13,20 @@
 /* Queue Constants */
 #define QUIC_RX_PACKET_QUEUE_SIZE 5
 #define QUIC_RX_PACKET_ITEM_SIZE sizeof(UWB_Packet_t)
+#define QUIC_STREAM_NOTIFY_QUEUE_SIZE 10
+#define QUIC_STREAM_NOTIFY_QUEUE_ITEM_SIZE sizeof(QUIC_Transport_Info_t)
 
 /* QUIC Constants */
 #define QUIC_LONG_PACKET_PAYLOAD_SIZE_MAX (ROUTING_DATA_PACKET_PAYLOAD_SIZE_MAX - 14)
 #define QUIC_ONE_RTT_PACKET_PAYLOAD_SIZE_MAX (ROUTING_DATA_PACKET_PAYLOAD_SIZE_MAX - sizeof(Quic_Short_Packet_Header_t))
 #define QUIC_ACK_FRAME_RANGE_SIZE_MAX ((MAX(QUIC_LONG_PACKET_PAYLOAD_SIZE_MAX, QUIC_ONE_RTT_PACKET_PAYLOAD_SIZE_MAX) - 18) / sizeof(Quic_ACK_Range_t))
 #define QUIC_PARAMETER_FRAME_VALUE_LENGTH_MAX 4
-#define QUIC_PARAMETER_FRAME_ITEM_SIZE_MAX 10 * QUIC_PARAMETER_FRAME_VALUE_LENGTH_MAX
+#define QUIC_PARAMETER_FRAME_ITEM_SIZE_MAX (10 * QUIC_PARAMETER_FRAME_VALUE_LENGTH_MAX)
 #define QUIC_CONNECTION_NUMBER_MAX 16
+#define QUIC_STREAM_NUMBER_MAX 10
 #define QUIC_ACK_DELAY_MAX 2000 // 2 seconds
 #define QUIC_STREAM_FRAME_PAYLOAD_SIZE_MAX (QUIC_ONE_RTT_PACKET_PAYLOAD_SIZE_MAX - sizeof(Quic_Stream_Frame_Header_t))
+#define QUIC_STREAM_DATA_BLOCK_MAX_DATA_SIZE QUIC_STREAM_FRAME_PAYLOAD_SIZE_MAX
 
 /* QUIC Parameters */
 #define QUIC_PARAMETER_NUMBER 10
@@ -30,7 +34,7 @@
 #define QUIC_MAX_ROUTE_PAYLOAD_SIZE_DEFAULT ROUTING_DATA_PACKET_PAYLOAD_SIZE_MAX
 #define QUIC_INITIAL_MAX_DATA_DEFAULT 1000 // 1KB
 #define QUIC_INITIAL_MAX_STREAM_DATA_UNI_DEFAULT 1000 // 1KB
-#define QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT 10
+#define QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT 10 // <= 10 streams
 #define QUIC_ACK_DELAY_EXPONENT_DEFAULT 3
 #define QUIC_ACK_DELAY_MAX_DEFAULT 25 // 25 milliseconds
 
@@ -70,7 +74,6 @@ typedef enum {
 } QUIC_NODE_STATUS;
 
 typedef enum {
-    QUIC_ORIGINAL_DESTINATION_CONNECTION_ID,
     QUIC_MAX_IDLE_TIMEOUT,
     QUIC_MAX_ROUTE_PAYLOAD_SIZE,
     QUIC_INITIAL_MAX_DATA,
@@ -79,15 +82,14 @@ typedef enum {
     QUIC_ACK_DELAY_EXPONENT,
     QUIC_MAX_ACK_DELAY,
     QUIC_ACTIVE_CONNECTION_ID_LIMIT,
-    QUIC_INITIAL_SOURCE_CONNECTION_ID,
     QUIC_PARAMETER_TYPE_COUNT,
 } QUIC_PARAMETER_TYPE;
 
 typedef struct {
     BlockList_t pendingBlockList;
     BlockList_t unackedBlockList;
-    uint32_t sendOffset; // offset has been sent and acked
-    uint32_t maxSendOffset; // max send window
+    uint32_t sendOffset; // offset that data has been sent
+    uint32_t maxSendOffset; // this stream's max send offset, that means the file's length
     DataBlock_t *freeBlocks;
     bool sentFin;
 } QUIC_Stream_Send_Buffer_t;
@@ -96,9 +98,12 @@ typedef struct {
     BlockList_t receiveBlockList;
     uint32_t readOffset; // the offset that has been submitted to the application
     uint32_t consumedOffset;
-    uint32_t maxReceiveOffset; // max receive window
+//    uint32_t maxReceiveOffset;
     DataBlock_t *freeBlocks;
     bool receivedFin;
+    bool isIntegrity;
+    struct QUIC_Stream_Receive_Buffer_t *nextDataBuffer;
+    struct QUIC_Stream_Receive_Buffer_t *prevDataBuffer;
 } QUIC_Stream_Receive_Buffer_t;
 
 typedef struct {
@@ -107,22 +112,46 @@ typedef struct {
     uint32_t offset;
     uint32_t packetNumber;
     bool isFin;
+    bool isHead;
 } QUIC_Stream_Sending_Data_t;
+
+typedef enum {
+    QUIC_STREAM_SENDING_READY, // when create a stream, ready to send
+    QUIC_STREAM_SENDING_SEND, // when sending data
+    QUIC_STREAM_SENDING_DATA_SENT, // when send stream and fin, now retransmit lost packet
+    QUIC_STREAM_SENDING_DATA_RECEIVED, // when receive all ack
+    QUIC_STREAM_SENDING_RESET_SENT, // when send RESET_STREAM
+    QUIC_STREAM_SENDING_RESET_RECEIVED, // when send RESET_STREAM before, and receive ack now
+} QUIC_STREAM_SENDING_STATUS;
 
 typedef struct {
     uint16_t streamId;
     QUIC_Stream_Send_Buffer_t dataBuffer;
-    int (*writeSendBuffer)(QUIC_Stream_Send_Buffer_t *streamBuffer, const uint8_t *data, uint32_t dataLength);
+    QUIC_STREAM_SENDING_STATUS sendingStatus;
+    bool isHeadStream;
+    uint16_t preStreamID;
+    int (*writeSendBuffer)(QUIC_Stream_Send_Buffer_t *streamBuffer, const uint8_t *data, uint32_t dataLength, bool isFin);
     int (*readSendBuffer)(QUIC_Stream_Send_Buffer_t *streamBuffer, QUIC_Stream_Sending_Data_t *sendingData, uint32_t dataLength, uint32_t packetNumber);
-    // TODO: add functions
 } QUIC_Send_Stream_Item_t;
+
+typedef enum {
+    QUIC_STREAM_RECEIVING_RECEIVE, // when create a stream, ready to receive
+    QUIC_STREAM_RECEIVING_SIZE_KNOWN, // when receive stream and fin, now wait for retransmit lost packet
+    QUIC_STREAM_RECEIVING_DATA_RECEIVED, // when receive all stream data
+    QUIC_STREAM_RECEIVING_DATA_READY, // app read all data
+    QUIC_STREAM_RECEIVING_RESET_RECEIVED, // when receive RESET_STREAM
+    QUIC_STREAM_RECEIVING_RESET_READ, // app read reset
+} QUIC_STREAM_RECEIVING_STATUS;
 
 typedef struct {
     uint16_t streamId;
     QUIC_Stream_Receive_Buffer_t dataBuffer;
-    int (*writeReceiveBuffer)(QUIC_Stream_Receive_Buffer_t *streamBuffer, const uint8_t *data, const uint32_t dataLength, const uint32_t offset);
+    QUIC_STREAM_RECEIVING_STATUS receivingStatus;
+    bool isHeadStream;
+    uint16_t preStreamID;
+    struct QUIC_Server_Conn_Item_t *connItemPtr;
+    int (*writeReceiveBuffer)(QUIC_Stream_Receive_Buffer_t *streamBuffer, const uint8_t *data, const uint32_t dataLength, const uint32_t offset, const bool isFin);
     int (*readReceiveBuffer)(QUIC_Stream_Receive_Buffer_t *streamBuffer, const uint8_t *data, const uint32_t dataLength);
-    // TODO: add functions
 } QUIC_Read_Stream_Item_t;
 
 typedef struct {
@@ -130,7 +159,7 @@ typedef struct {
     uint16_t capacity;
     Map_t streamsMap;
     /* Functions */
-    void *(*streamItemSet)(Map_t *streamsMap, void *streamItem, uint16_t streamId);
+    void *(*streamItemSet)(Map_t *streamsMap, void *streamItem, uint16_t streamId, QUIC_NODE_STATUS status);
     void *(*streamItemGet)(Map_t *streamsMap, uint16_t streamId);
 } QUIC_Stream_t;
 
@@ -144,17 +173,16 @@ typedef struct {
     bool isLost;
     uint8_t retransmitCount;
     DataBlock_t *dataBlock;
-    // TODO: can add more info
 } QUIC_Packet_Info_Node_t;
 
 typedef struct {
     RBRoot_t *packetInfoRBTree; // the packet number is the key
     uint16_t packetInfoNodeCount; // the packet node number count
     uint32_t largestPacketNumber; // the largest packet number
-    uint32_t minimumPacketUnackedNumber; // the minimum unacked packet number
+    uint32_t minimumUnackedPacketNumber; // the minimum unacked packet number
     /* Functions */
-    int (*packetInfoNodeInsert)(struct QUIC_Packet_Info_Manager_t *packetInfoManager, QUIC_Packet_Info_Node_t *packetInfoNode);
-    int (*packetInfoNodeDelete)(const struct QUIC_Packet_Info_Manager_t *packetInfoManager, uint32_t packetNumber, struct QUIC_Client_Conn_Item_t *clientConnItem);
+    int (*packetInfoNodeInsert)(RBRoot_t *packetInfoRBTree, QUIC_Packet_Info_Node_t *packetInfoNode);
+    int (*packetInfoNodeDelete)(RBRoot_t *packetInfoRBTree, uint32_t packetNumber, uint16_t connId);
 } QUIC_Packet_Info_Manager_t;
 
 /* HEAD[| gap | acked len |] --> TAIL[| gap | acked len |] --> NULL */
@@ -189,8 +217,9 @@ typedef struct {
 
 typedef struct {
     UWB_Address_t peer;
-    uint16_t connId;
-    uint16_t dstConnId;
+    uint16_t connId; // my local connection id
+    uint16_t dstConnId; // peer's connection id
+    TaskHandle_t userTaskHandle; // used to notify the user task
     QUIC_CLIENT_CONN_STATE_TYPE currentState;
     QUIC_Transport_Params_Tuple_t transportParamsTuple;
     QUIC_Packet_ACK_Window_t packetSendWindow[QUIC_PACKET_ACK_COUNT - 1]; // for client, 1-RTT packet will not use it
@@ -207,6 +236,7 @@ typedef struct {
     QUIC_Packet_ACK_Window_t packetSendWindow[QUIC_PACKET_ACK_COUNT];
     QUIC_Packet_ACK_Window_t packetReceiveWindow[QUIC_PACKET_ACK_COUNT];
     QUIC_Stream_t readStreams;
+    uint16_t minimumStreamId; // int this connection, the minimum ended stream id, | ok | ok | minimumStreamId | nok | nok |
 } QUIC_Server_Conn_Item_t;
 
 typedef struct {
@@ -214,13 +244,22 @@ typedef struct {
     uint16_t capacity;
     Map_t connItemsMap; /* Hash table, to store conn parameters, type is QUIC_Client_Conn_Item_t*/
     /* Functions */
-    void (*connItemSet)(Map_t *connItemsMap, uint16_t connId, void *connItem, QUIC_NODE_STATUS status);
+    void *(*connItemSet)(Map_t *connItemsMap, uint16_t connId, void *connItem, QUIC_NODE_STATUS status);
     void *(*connItemGet)(Map_t *connItemsMap, uint16_t connId);
 } QUIC_Conn_t;
+
+/* Transport Information */
+typedef struct {
+    uint16_t peer;
+    uint16_t connectionID;
+    uint16_t streamID;
+} QUIC_Transport_Info_t; // record running stream currently
 
 typedef struct {
     UWB_Address_t me;
     SemaphoreHandle_t mu;
+    QUIC_Transport_Info_t transportInfo[QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT];
+    bool isOpen;
     QUIC_Conn_t conns;
 } QUIC_Node_t;
 
@@ -274,8 +313,6 @@ typedef struct {
 
 /* QUIC Frames */
 typedef enum{
-    QUIC_FRAME_PADDING,
-    QUIC_FRAME_PING,
     QUIC_FRAME_HELLO,
     QUIC_FRAME_HANDSHAKE_DONE,
     QUIC_FRAME_ACK,
@@ -283,6 +320,8 @@ typedef enum{
     QUIC_FRAME_PARAMETER,
     QUIC_FRAME_STREAM,
     QUIC_FRAME_STREAM_FIN,
+    QUIC_FRAME_STREAM_HEAD, // a stream group's first stream
+    QUIC_FRAME_STREAM_HEAD_FIN, // the first stream's fin frame
     QUIC_FRAME_TYPE_COUNT
 } QUIC_FRAME_TYPE;
 
@@ -325,6 +364,7 @@ typedef struct {
 typedef struct{
     uint8_t type;
     uint16_t streamID;
+    uint16_t preStreamID; // if these streams are in a group, this is the previous stream id
     uint32_t offset;
     uint32_t length;
 } __attribute__((packed)) Quic_Stream_Frame_Header_t;
@@ -338,28 +378,36 @@ void quicInit();
 
 /* Quic Operations */
 /* Packet Operations */
-int quicGenerateInitialPacket(Quic_Long_Packet_t *packet, const uint16_t srcConnId, const uint16_t dstConnId, void *connItem, QUIC_NODE_STATUS status);
+int quicGenerateInitialPacket(Quic_Long_Packet_t *packet, uint16_t srcConnId, uint16_t dstConnId, void *connItem, QUIC_NODE_STATUS status);
 int quicProcessInitialPacket(const Quic_Long_Packet_t *initialPacket, UWB_Address_t peer);
-int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, const uint16_t srcConnId, const uint16_t dstConnId, void *connItem, QUIC_NODE_STATUS status);
-int quicProcessHandshakePacket(Quic_Long_Packet_t *handshakePacket, const UWB_Address_t peer);
+int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, uint16_t srcConnId, uint16_t dstConnId, void *connItem, QUIC_NODE_STATUS status);
+int quicProcessHandshakePacket(Quic_Long_Packet_t *handshakePacket, UWB_Address_t peer);
 int quicGenerateOneRTTPacket(Quic_One_RTT_Packet_t *packet, uint16_t dstConnId, QUIC_NODE_STATUS status); // TODO: coding
-int quicProcessOneRTTPacket(Quic_One_RTT_Packet_t *packet); // TODO: coding
+int quicProcessOneRTTPacket(const Quic_One_RTT_Packet_t *packet); // TODO: coding
 /* Frame Operations */
 int quicGenerateTypeFrame(Quic_Long_Packet_t *packet, uint16_t framePos, QUIC_FRAME_TYPE type); /* Enter the contents of the frame in the packet */
 int quicHandleHelloFrame(const Quic_Long_Packet_t *packet, UWB_Address_t peer);
 int quicHandleHandshakeDoneFrame(const Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
-int quicGenerateACKFrame(Quic_Long_Packet_t *packet, const int framePos, const void *connItem_);
-int quicHandleACKFrame(const Quic_Long_Packet_t *packet, const int pos, UWB_Address_t peer);
-int quicGenerateParameterFrame(Quic_Long_Packet_t *packet, const uint16_t framePos);
-int quicHandleParameterFrame(Quic_Long_Packet_t *packet, const int pos, UWB_Address_t peer);
+int quicGenerateACKFrame(Quic_Long_Packet_t *packet, int framePos, const void *connItem_);
+int quicHandleACKFrame(const Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
+int quicGenerateParameterFrame(Quic_Long_Packet_t *packet, uint16_t framePos);
+int quicHandleParameterFrame(Quic_Long_Packet_t *packet, int pos, UWB_Address_t peer);
 int quicGenerateStreamFrame(Quic_One_RTT_Packet_t *packet, uint16_t framePos, uint16_t connID, uint16_t streamID, uint32_t restLength); // TODO: modify
-int quicHandleStreamFrame(Quic_One_RTT_Packet_t *packet, int pos); // TODO: coding
+int quicHandleStreamFrame(const Quic_One_RTT_Packet_t *packet, int pos); // TODO: coding
 int quicGenerateOneRTTPacketACKFrame(Quic_One_RTT_Packet_t *packet, uint16_t framePos, const QUIC_Server_Conn_Item_t *connItem);
-/* Message Operations */
-int quicClientSendConnRequest(const UWB_Address_t peer);
-int quicServerSendConnReply(const UWB_Address_t peer, const uint16_t connId);
-int quicClientSendConnReply(const UWB_Address_t peer, const uint16_t connId);
-int quicServerSendConnDone(const UWB_Address_t peer, const uint16_t connId);
+/* Connection Operations */
+int quicClientSendConnRequest(UWB_Address_t peer, TaskHandle_t userTaskHandle);
+int quicServerSendConnReply(UWB_Address_t peer, uint16_t connId);
+int quicClientSendConnReply(UWB_Address_t peer, uint16_t connId);
+int quicServerSendConnDone(UWB_Address_t peer, uint16_t connId);
+/* Stream Operations */
+int quicSendStreamCreate(uint16_t connID, bool isHeadStream, uint16_t preStreamID);
+int quicSendStreamWrite(uint16_t connID, uint16_t streamID, const uint8_t *data, uint32_t len, bool isLastSegment);
 int quicClientSendData(uint16_t connID, uint16_t streamID);
+int quicReceiveStreamRead(uint16_t connectionId, uint16_t streamId, uint8_t *cache, uint32_t len);
+int quicReceiveStreamClose(uint16_t connectionId, uint16_t streamId);
+/* Transform Information */
+int quicTransformInfoAdd(uint16_t connID, uint16_t streamID);
+int quicTransformInfoDelete(uint16_t connID, uint16_t streamID);
 
 #endif

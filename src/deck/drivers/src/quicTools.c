@@ -94,7 +94,9 @@ void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketN
         case MAP_TYPE_FLOAT           :{instance->typeSize = sizeof(float);break;}
         case MAP_TYPE_DOUBLE          :{instance->typeSize = sizeof(double);break;}
         case MAP_TYPE_QUIC_CLIENT_CONN:
-        case MAP_TYPE_QUIC_SERVER_CONN:{instance->typeSize = size;break;}
+        case MAP_TYPE_QUIC_SERVER_CONN:
+        case MAP_TYPE_QUIC_SEND_STREAM:
+        case MAP_TYPE_QUIC_READ_STREAM:{instance->typeSize = size;break;}
         default:break;
     }
     instance->isCpyAddr = isCpyAddr;
@@ -230,6 +232,7 @@ RBRoot_t* createRBTree(void) {
     }
     root->node = NULL;
     root->size = 0;
+    root->externResourcePtr = NULL;
 
     return root;
 }
@@ -630,6 +633,8 @@ void clearRBTree(RBRoot_t *root) {
         return;
     }
     RBNode_t *node = root->node;
+    root->size = 0;
+    root->externResourcePtr = NULL; // users manage external resources
     clearRBTreeNode(node);
     TOOL_FREE(root);
 }
