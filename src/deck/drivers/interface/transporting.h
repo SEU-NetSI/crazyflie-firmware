@@ -19,18 +19,18 @@ typedef struct {
     uint16_t peer;
     uint16_t connectionId;
     uint16_t streamId;
+    uint16_t streamGroupID;
 } UWB_Transport_Info_t;
 
 /* Transport Operations */
 /* Client Operations */
 UWB_Socket_t *uwbClientSocketCreate(void);
 int uwbClientConnect(UWB_Socket_t *socket, UWB_Address_t peer);
-int uwbClientSend(UWB_Socket_t *socket, uint8_t *data, uint32_t len);
-int uwbClientClose(UWB_Socket_t *socket); // TODO: coding
+int uwbClientSend(UWB_Socket_t *socket, const uint8_t *data, uint32_t len);
+int uwbClientClose(UWB_Socket_t *socket);
 /* Server Operations */
 int uwbServerListen(void);
 int uwbServerRead(uint8_t *cache, uint32_t len);
-int uwbServerClose(void); // TODO: coding
+int uwbServerClose(void);
 
 #endif
-// TODO: 切片阈值怎么设置？

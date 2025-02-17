@@ -52,7 +52,7 @@ int uwbClientConnect(UWB_Socket_t *socket, UWB_Address_t peer) {
  * @param len: the length of the data
  * @return: DWT_SUCCESS if the data is sent successfully, DWT_ERROR if the data is not sent successfully
  */
-int uwbClientSend(UWB_Socket_t *socket, uint8_t *data, uint32_t len) {
+int uwbClientSend(UWB_Socket_t *socket, const uint8_t *data, uint32_t len) {
     if(socket == NULL) {
         DEBUG_PRINT("uwbSend: socket is NULL\n");
         return DWT_ERROR;
@@ -62,34 +62,43 @@ int uwbClientSend(UWB_Socket_t *socket, uint8_t *data, uint32_t len) {
         return DWT_ERROR;
     }
     /* according to len, slice the data into several parts, each part will create a stream */
-    int chunkNum = ((int)len % UWB_CHUNK_SLICE_THRESHOLD) + 1;
-    uint32_t chunkLen = len / chunkNum;
+    const int chunkNum = ((int)len % UWB_CHUNK_SLICE_THRESHOLD) + 1;
+    const uint32_t chunkLen = len / chunkNum;
     uint32_t restLen = len;
     uint32_t curPos = 0;
-    int streamID = 0;
+    int prevStreamID = 0;
+    int currStreamID = getNextStreamId();
+    int nextStreamID = 0;
     for(int i = 0; i < chunkNum; i++) { // create a stream for each chunk
-        int res = quicSendStreamCreate(socket->connectionID, i == 0, streamID); // will prevent stream number overflow
+        if (i == chunkNum - 1) {
+            nextStreamID = 0;
+        } else {
+            nextStreamID = getNextStreamId();
+        }
+        const int res = quicSendStreamCreate(socket->connectionID, currStreamID, prevStreamID, nextStreamID); // will prevent stream number do not overflow
         if(res == DWT_ERROR) {
             DEBUG_PRINT("uwbSend: quicStreamCreate failed\n");
             return DWT_ERROR;
         }
         socket->streamCount++;
-        streamID = res;
         for(int j = 0; j < QUIC_INITIAL_MAX_STREAMS_UNI_DEFAULT; j++) { // find an empty slot to store the streamID
             if(socket->streamIDs[j] == 0) {
-                socket->streamIDs[j] = streamID;
+                socket->streamIDs[j] = currStreamID;
                 break;
             }
         }
         /* write data into stream buffer */
         uint32_t writeLen = (restLen > chunkLen) ? chunkLen : restLen;
-        if(restLen == writeLen) quicSendStreamWrite(socket->connectionID, streamID, data + curPos, writeLen, true);
-        else quicSendStreamWrite(socket->connectionID, streamID, data + curPos, writeLen, false);
+        if(restLen == writeLen) quicSendStreamWrite(socket->connectionID, currStreamID, data + curPos, writeLen, true);
+        else quicSendStreamWrite(socket->connectionID, currStreamID, data + curPos, writeLen, false);
 
         curPos += writeLen;
         restLen -= writeLen;
         /* let quic node know which stream is open */
-        quicTransformInfoAdd(socket->connectionID, streamID);
+        quicTransformInfoAdd(socket->connectionID, currStreamID);
+        /* update stream ids */
+        prevStreamID = currStreamID;
+        currStreamID = nextStreamID;
     }
 
     return DWT_SUCCESS;
@@ -107,9 +116,9 @@ int uwbServerListen() {
  * read data from the streams, when the data is ready, the stream will be notified by a queue, once all data is read, the stream will be removed from the queue
  * @param cache: the buffer to store the data
  * @param len: the length of the data to read
- * @return: DWT_SUCCESS if the data is read successfully, DWT_ERROR if the data is not read successfully, maybe the stream is not ready
+ * @return: 'group id' to let the user know which send instruction is read. DWT_SUCCESS if no data to read, DWT_ERROR if the data is not read successfully, maybe the stream is not ready
  */
-int uwbServerRead(uint8_t *cache, uint32_t len) { // TODO: need to figure out which send instruction is returned
+int uwbServerRead(uint8_t *cache, uint32_t len) {
     if (!quicServerNode.isOpen) {
         DEBUG_PRINT("uwbRead: quic server is not open\n");
         return DWT_ERROR;
@@ -117,17 +126,46 @@ int uwbServerRead(uint8_t *cache, uint32_t len) { // TODO: need to figure out wh
     /* use a queue to notify which stream is ready to read */
     UWB_Transport_Info_t socketInfo = {0};
     if (xQueuePeek(streamNotifyQueue, &socketInfo, 0) == pdTRUE) {
-        int res = quicReceiveStreamRead(socketInfo.connectionId, socketInfo.streamId, cache, len);
-        if (res == 1) { // read all data is finished
+        const int res = quicReceiveStreamRead(socketInfo.connectionId, socketInfo.streamId, cache, len);
+        if (res == 1) { // all data in a stream group that can be read currently is read, but there may still be some streams behind which the data is currently incomplete and will be read in the future
             xQueueReceive(streamNotifyQueue, &socketInfo, 0);
-//            quicReceiveStreamClose(socketInfo.connectionId, socketInfo.streamId);
-            return DWT_SUCCESS;
+            quicReceiveStreamClose(socketInfo.connectionId, socketInfo.streamId); // the incoming stream must be the group header and it's data buffer must be integrated
+            return socketInfo.streamGroupID; // return the stream group ID to let the user know which send instruction is returned
         } else if (res == 0) { // read all data is not finished
-            return DWT_SUCCESS;
+            return socketInfo.streamGroupID; // return the stream group ID to let the user know which send instruction is returned
         } else {
-            return DWT_ERROR;
+            return DWT_ERROR; // some error occurs
         }
     } else {
+        return DWT_SUCCESS; // success but no data to read
+    }
+}
+
+/*
+ * close the socket, release the resources
+ * @param socket: the socket to close
+ * @return: DWT_SUCCESS if the socket is closed successfully, DWT_ERROR if the socket is not closed successfully
+ */
+int uwbClientClose(UWB_Socket_t *socket) {
+    if(socket == NULL) {
+        DEBUG_PRINT("uwbClose: socket is NULL\n");
         return DWT_ERROR;
     }
+    if(socket->connectionID == 0) {
+        DEBUG_PRINT("uwbClose: socket is not connected\n");
+        return DWT_ERROR;
+    }
+    /* close the connection(mean while close the streams) */
+    quicClientConnClose(socket->connectionID);
+    /* release the resources */
+    free(socket);
+    // TODO: send close message to the server
+
+    return DWT_SUCCESS;
+}
+
+int uwbServerClose(void) {
+    quicServerNode.isOpen = false;
+
+    return DWT_SUCCESS;
 }

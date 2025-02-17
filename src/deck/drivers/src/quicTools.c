@@ -142,12 +142,13 @@ void *mapSet(Map_t *map, const char *key, void *value, uint16_t valueSize) {
     return node->value;
 }
 
-void mapRemove_(Map_Base_t *map, const char *key) {
+void mapRemove_(Map_Base_t *map, const char *key, void (*callback)(Map_Node_t *node)) {
     Map_Node_t *node;
     Map_Node_t **next = mapGetNodeRef(map, key);
     if(next) {
         node = *next;
         *next = (*next)->next;
+        if (callback != NULL) callback(node);
         TOOL_FREE(node);
         map->nodeNumber--;
     }
@@ -174,13 +175,15 @@ const char *mapNext_(Map_Base_t *map, Map_Iter_t *iter) {
     return (char *) (iter->node + 1);
 } // TODO: debug
 
-void mapClear_(Map_Base_t *map) {
+void mapClear_(Map_Base_t *map, void (*callback)(Map_Node_t *node)) {
     Map_Node_t *next, *node;
     int index;
     index = map->bucketNumber;
     while(index--) {
         node = map->buckets[index];
         while(node) {
+            if (callback != NULL) callback(node);
+            node->value == NULL;
             next = node->next;
             TOOL_FREE(node);
             node = next;
@@ -235,6 +238,42 @@ RBRoot_t* createRBTree(void) {
     root->externResourcePtr = NULL;
 
     return root;
+}
+/* Traverse the RBTree, if input callback, then when visit each node, call it */
+void traverseRBTree(const RBRoot_t *root, void (*callback)(DataPtr_t *data)) {
+    if (root == NULL) {
+        DEBUG_PRINT("In quicTools, traverseRBTree: root is NULL\n");
+        return;
+    }
+    RBNode_t *node = root->node;
+    if (node == NULL) {
+        DEBUG_PRINT("In quicTools, traverseRBTree: node is NULL\n");
+        return;
+    }
+    RBNode_t *currNode = root->node;
+    while (currNode != NULL) {
+        if (callback != NULL) callback(currNode->data);
+        // if left node is not NULL, then go to left node first
+        if (currNode->left != NULL) {
+            currNode = currNode->left;
+            continue;
+        }
+        // if right node is not NULL, then go to right node
+        if (currNode->right != NULL) {
+            currNode = currNode->right;
+            continue;
+        }
+        // Trace back to the ancestor node that did not access the right subtree
+        while (currNode != NULL) {
+            RBNode_t *parent = currNode->parent;
+            if (parent == NULL) return;
+            if (parent->right != NULL && parent->right != currNode) {
+                currNode = parent->right;
+                break;
+            }
+            currNode = parent;
+        }
+    }
 }
 /* Search function */
 static RBNode_t* search(RBNode_t *node, const KeyType_t key) {

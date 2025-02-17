@@ -54,10 +54,10 @@ typedef struct {
 } Map_t;
 
 /* Macro Function */
-#define mapClear(map) \
-    mapClear_(&(map)->mapBase)
-#define mapRemove(map, key) \
-    mapRemove_(&(map)->mapBase, key)
+#define mapClear(map, callback) \
+    mapClear_(&(map)->mapBase, callback)
+#define mapRemove(map, key, callback) \
+    mapRemove_(&(map)->mapBase, key, callback)
 #define mapIter(map) \
     mapIter_()
 #define mapNext(map, iter) \
@@ -67,10 +67,10 @@ typedef struct {
 void mapInit(Map_t *instance, MAP_TYPE type, uint8_t isCpyAddr, uint16_t bucketNumber, int size);
 void *mapGet(const Map_t *map, const char *key);
 void *mapSet(Map_t *map, const char *key, void *value, uint16_t valueSize);
-void mapRemove_(Map_Base_t *map, const char *key);
+void mapRemove_(Map_Base_t *map, const char *key, void (*callback)(Map_Node_t *node));
 Map_Iter_t mapIter_(void);
 const char *mapNext_(Map_Base_t *map, Map_Iter_t *iter);
-void mapClear_(Map_Base_t *map);
+void mapClear_(Map_Base_t *map, void (*callback)(Map_Node_t *node));
 
 /* MEMORY BLOCK */
 typedef struct DataBlock {
@@ -117,6 +117,7 @@ typedef struct {
 } RBRoot_t;
 /* Functions */
 RBRoot_t* createRBTree(void); // create a new RBTree
+void traverseRBTree(const RBRoot_t *root, void (*callback)(DataPtr_t *data)); // traversal a RBTree
 void clearRBTree(RBRoot_t *root); // destroy a RBTree
 int insertRBTree(RBRoot_t *root, KeyType_t key, DataPtr_t data, DataSizeType_t dataSize); // insert a node to RBTree
 int deleteRBTree(RBRoot_t *root, KeyType_t key); // delete a node from RBTree with key
