@@ -23,8 +23,10 @@
 
 static QueueHandle_t rxPacketQueue;
 QueueHandle_t streamNotifyQueue;
+static QueueHandle_t timerDeleteQueue;
 static TaskHandle_t quicRxTaskHandle;
 static TaskHandle_t quicTxTaskHandle;
+static TaskHandle_t quicTimerCleanUpTaskHandle;
 QUIC_Node_t quicClientNode;
 QUIC_Node_t quicServerNode;
 static uint16_t quicSrcConnId = 1;
@@ -947,6 +949,22 @@ static void quicConnItemsMapInit(QUIC_Conn_t *conn, const QUIC_NODE_STATUS statu
     conn->connItemGet = quicConnItemGet;
 }
 
+/* Callbacks */
+/* clear callbacks */
+static void quicServerConnClearCallback(const Map_Node_t *node) {
+    if (node == NULL) return;
+    QUIC_Server_Conn_Item_t *connItem = node->value;
+    if (connItem == NULL) return;
+    /* free the connection's space */
+    free(connItem);
+}
+static void quicClientConnClearCallback(const Map_Node_t *node) {
+    if (node == NULL) return;
+    QUIC_Client_Conn_Item_t *connItem = node->value;
+    if (connItem == NULL) return;
+    /* free the connection's space */
+    free(connItem);
+}
 /* Timer callbacks */
 static int gcd(int a, int b) {
     if (a == 0 || b == 0) {
@@ -961,21 +979,58 @@ static int gcd(int a, int b) {
 }
 
 void quicServerConnTimerCallback(TimerHandle_t xTimer) {
-    QUIC_Server_Conn_Item_t *connItem = pvTimerGetTimerID(xTimer);
-    /* calculate the appropriate clock cycle */
-    connItem->timerPeriod = gcd(connItem->connTimeout, connItem->connACKPeriod);
+    uint16_t connId = (uint16_t)pvTimerGetTimerID(xTimer); // by search connection id, we can know is the connection is deleted or not
+    QUIC_Server_Conn_Item_t *connItem = quicServerNode.conns.connItemGet(&quicServerNode.conns.connItemsMap, connId);
+    if (connItem == NULL) {
+        DEBUG_PRINT("quicServerConnTimerCallback: connItem is null.\n");
+        return;
+    }
+    if (connItem->currentState == QUIC_SERVER_CONN_STATE_CLOSE) { // because when we close the connection, the timer may not delete successfully, so we need to check it several times
+        if (!connItem->isTimerWaitToDelete) {
+            connItem->isTimerWaitToDelete = xQueueSend(timerDeleteQueue, &connItem->timer, 0);
+            if (connItem->isTimerWaitToDelete) { // while the timer can be deleted, we can remove the connection from the map finally
+                char mapKey[10] = {0};
+                itoa(connItem->connId, &mapKey[0], 10);
+                mapRemove(&quicServerNode.conns.connItemsMap, &mapKey[0], quicServerConnClearCallback);
+            }
+        }
+        return; // timer is stop, mean the connection will be closed later
+    }
     /* get current time */
     const TickType_t currentTime = xTaskGetTickCount();
+    /* check whether the connection times out */
+    if ((currentTime - connItem->lastReceiveTime) * 1000 / configTICK_RATE_HZ >= connItem->connTimeout) {
+        /* close connection */
+        quicServerConnClose(connItem->connId);
+    }
+    /* connection establish phase */
+    uint8_t connState = connItem->currentState;
+    switch (connState) {
+        case QUIC_SERVER_CONN_STATE_INITIAL:
+        case QUIC_SERVER_CONN_STATE_HELLO_HANDLED:
+            return; // do nothing
+        case QUIC_SERVER_CONN_STATE_PARAMETER_SENT:
+            quicServerSendConnReply(connItem->peer, connItem->connId, true);
+            return;
+        case QUIC_SERVER_CONN_STATE_ACKNOWLEDGE_HANDLED:
+            return; // do nothing
+        case QUIC_SERVER_CONN_STATE_OPEN:
+            if (connItem->readStreams.size == 0) {
+                quicServerSendConnDone(connItem->peer, connItem->connId, true); // the flow is not started, and the connection may not be established
+                return;
+            }
+            break;
+        default:
+            break;
+    }
+    /* flow transport phase */
+    /* calculate the appropriate clock cycle */
+    connItem->timerPeriod = gcd(connItem->connTimeout, connItem->connACKPeriod);
     /* check whether the ack sending period has expired */
     if ((currentTime - connItem->lastACKTime) * 1000 / configTICK_RATE_HZ >= connItem->connACKPeriod) {
         /* send ack */
         quicServerSendACK(connItem->peer, connItem->connId);
         connItem->lastACKTime = currentTime;
-    }
-    /* check whether the connection times out */
-    if ((currentTime - connItem->lastReceiveTime) * 1000 / configTICK_RATE_HZ >= connItem->connTimeout) {
-        /* close connection */
-        quicServerConnClose(connItem->connId);
     }
 }
 
@@ -993,21 +1048,68 @@ static void retransmitPacket(void *packetInfoNode) {
 }
 
 void quicClientConnTimerCallback(TimerHandle_t xTimer) {
-    QUIC_Client_Conn_Item_t *connItem = pvTimerGetTimerID(xTimer);
-    /* calculate the appropriate clock cycle */
-    connItem->timerPeriod = gcd(connItem->connTimeout, connItem->retransmitPeriod);
+    uint16_t connId = (uint16_t)pvTimerGetTimerID(xTimer); // by search connection id, we can know is the connection is deleted or not
+    QUIC_Client_Conn_Item_t *connItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, connId);
+    if (connItem == NULL) {
+        DEBUG_PRINT("quicClientConnTimerCallback: connItem is null.\n");
+        return;
+    }
+    if (connItem->currentState == QUIC_CLIENT_CONN_STATE_CLOSE) { // because when we close the connection, the timer may not delete successfully, so we need to check it several times
+        if (!connItem->isTimerWaitToDelete) {
+            connItem->isTimerWaitToDelete = xQueueSend(timerDeleteQueue, &connItem->timer, 0);
+            if (connItem->isTimerWaitToDelete) { // while the timer can be deleted, we can remove the connection from the map finally
+                char mapKey[10] = {0};
+                itoa(connItem->connId, &mapKey[0], 10);
+                mapRemove(&quicClientNode.conns.connItemsMap, &mapKey[0], quicClientConnClearCallback);
+            }
+        }
+        return; // timer is stop, mean the connection will be closed later
+    }
     /* get current time */
     TickType_t currentTime = xTaskGetTickCount();
-    /* check whether the retransmission period has expired */
-    traverseRBTree(connItem->packetInfoManager.packetInfoRBTree, retransmitPacket);
     /* check whether the connection times out */
-    currentTime = xTaskGetTickCount();
     if ((currentTime - connItem->lastReceiveTime) * 1000 / configTICK_RATE_HZ >= connItem->connTimeout) {
         /* close connection */
         quicClientConnClose(connItem->connId);
     }
+    /* connection establish phase */
+    uint8_t connState = connItem->currentState;
+    switch (connState) {
+        case QUIC_CLIENT_CONN_STATE_INITIAL:
+            return; // do nothing
+        case QUIC_CLIENT_CONN_STATE_HELLO_SENT:
+            quicClientSendConnRequest(connItem->peer, connItem->connId, NULL, true);
+            return;
+        case QUIC_CLIENT_CONN_STATE_PARAMETER_HANDLED:
+            return; // do nothing
+        case QUIC_CLIENT_CONN_STATE_ACKNOWLEDGE_SENT:
+            quicClientSendConnReply(connItem->peer, connItem->connId, true);
+            return;
+        case QUIC_CLIENT_CONN_STATE_OPEN:
+        default:
+            break;
+    }
+    /* flow transport phase */
+    /* calculate the appropriate clock cycle */
+    connItem->timerPeriod = gcd(connItem->connTimeout, connItem->retransmitPeriod);
+    /* check whether the retransmission period has expired */
+    traverseRBTree(connItem->packetInfoManager.packetInfoRBTree, retransmitPacket); // TODO: may write into queue too much at once, can optimize
 }
 
+/* Tasks */
+/* Timer clean up task */
+static void quicTimerCleanUpTask() {
+    systemWaitStart();
+
+    TimerHandle_t timerToDelete;
+    while(true) {
+        /* clean up client and server connection timer */
+        if (xQueueReceive(timerDeleteQueue, &timerToDelete, portMAX_DELAY) == pdTRUE) {
+            xTimerDelete(timerToDelete, portMAX_DELAY);
+        }
+        vTaskDelay(M2T(1));
+    }
+}
 /* Tx task */
 static void quicTxTask() {
     systemWaitStart();
@@ -1051,6 +1153,7 @@ static void quicRxTask() {
             uint8_t peerStatus = 0;
             uint16_t peerDstConnId = 0;
             bool error = false;
+            bool outmoded = false;
             while(curPosLen < payloadLen) {
                 const uint8_t headerForm = dataRxPacket.payload[curPosLen] >> 7;
                 if (headerForm != QUIC_LONG_HEADER && headerForm != QUIC_SHORT_HEADER) {
@@ -1085,6 +1188,8 @@ static void quicRxTask() {
                 }
                 error = packetOffset == ERROR;
                 if (error) break;
+                outmoded = packetOffset == SUCCESS;
+                if (outmoded) break;
                 curPosLen += packetOffset;
             }
             /* State transport */
@@ -1103,10 +1208,10 @@ static void quicRxTask() {
                 ASSERT(connItem != NULL); /* If connection is still null, then connection is not exist */
                 switch(connItem->currentState) {
                     case QUIC_SERVER_CONN_STATE_HELLO_HANDLED:
-                        quicServerSendConnReply(peer, quicTempSrcConnId);
+                        quicServerSendConnReply(peer, quicTempSrcConnId, false);
                         break;
                     case QUIC_SERVER_CONN_STATE_ACKNOWLEDGE_HANDLED:
-                        quicServerSendConnDone(peer, peerDstConnId);
+                        quicServerSendConnDone(peer, peerDstConnId, false);
                         break;
                     case QUIC_SERVER_CONN_STATE_OPEN:
                         // TODO: Send 1-RTT packet
@@ -1124,7 +1229,7 @@ static void quicRxTask() {
                 ASSERT(connItem != NULL);
                 switch(connItem->currentState) {
                     case QUIC_CLIENT_CONN_STATE_PARAMETER_HANDLED:
-                        quicClientSendConnReply(peer, connItem->connId);
+                        quicClientSendConnReply(peer, connItem->connId, false);
                         break;
                     case QUIC_CLIENT_CONN_STATE_OPEN:
                         // TODO: Send 1-RTT packet
@@ -1143,6 +1248,7 @@ static void quicRxTask() {
 void quicInit() {
     rxPacketQueue = xQueueCreate(QUIC_RX_PACKET_QUEUE_SIZE, QUIC_RX_PACKET_ITEM_SIZE);
     streamNotifyQueue = xQueueCreate(QUIC_STREAM_NOTIFY_QUEUE_SIZE, QUIC_STREAM_NOTIFY_QUEUE_ITEM_SIZE);
+    timerDeleteQueue = xQueueCreate(QUIC_TIMER_DELETE_QUEUE_SIZE, QUIC_TIMER_DELETE_QUEUE_ITEM_SIZE);
 
     quicConnIdMutex = xSemaphoreCreateMutex();
     quicStreamIdMutex = xSemaphoreCreateMutex();
@@ -1169,6 +1275,7 @@ void quicInit() {
 
     xTaskCreate(quicRxTask, ADHOC_DECK_QUIC_RX_TASK_NAME, UWB_TASK_STACK_SIZE, NULL, ADHOC_DECK_TASK_PRI, &quicRxTaskHandle);
     xTaskCreate(quicTxTask, ADHOC_DECK_QUIC_TX_TASK_NAME, UWB_TASK_STACK_SIZE, NULL, ADHOC_DECK_TASK_PRI, &quicTxTaskHandle);
+    xTaskCreate(quicTimerCleanUpTask, ADHOC_DECK_QUIC_TIMER_CLEAN_UP_TASK_NAME, 2 * sizeof(TaskHandle_t), NULL, ADHOC_DECK_TASK_PRI, &quicTimerCleanUpTaskHandle);
 }
 
 /* Frame Operations */
@@ -1215,15 +1322,16 @@ int quicHandleHelloFrame(const Quic_Long_Packet_t *packet, const UWB_Address_t p
     connItem_.lastACKTime = xTaskGetTickCount();
     connItem_.lastReceiveTime = xTaskGetTickCount();
     connItem_.timerPeriod = QUIC_SERVER_CONN_TIMER_PERIOD_DEFAULT;
-    QUIC_Client_Conn_Item_t *connItem = quicServerNode.conns.connItemSet(&quicServerNode.conns.connItemsMap, connItem_.connId, &connItem_, QUIC_SERVER);
+    QUIC_Server_Conn_Item_t *connItem = quicServerNode.conns.connItemSet(&quicServerNode.conns.connItemsMap, connItem_.connId, &connItem_, QUIC_SERVER);
     quicACKRangesInit(&connItem->packetReceiveWindow[QUIC_ONE_RTT_PACKET_ACK].ackRanges, QUIC_ACK_RANGES_CAPACITY_DEFAULT);
-    connItem->timer = xTimerCreate("quicServerConnTimer", pdMS_TO_TICKS(QUIC_SERVER_CONN_TIMER_PERIOD_DEFAULT), pdTRUE, (void *)connItem, quicServerConnTimerCallback);
+    connItem->timer = xTimerCreate("quicServerConnTimer", pdMS_TO_TICKS(QUIC_SERVER_CONN_TIMER_PERIOD_DEFAULT), pdTRUE, (void *)connItem->connId, quicServerConnTimerCallback);
+    connItem->isTimerWaitToDelete = false;
     if (connItem->timer == NULL) {
         DEBUG_PRINT("quicHandleHelloFrame: create timer failed.\n");
         return ERROR;
     }
     xTimerStart(connItem->timer, 0);
-    quicStreamItemsMapInit(&connItem->sendStreams, QUIC_SERVER);
+    quicStreamItemsMapInit(&connItem->readStreams, QUIC_SERVER);
     quicServerNode.conns.size++;
 
     quicTempSrcConnId = connItem->connId; /* Will be used when server reply */
@@ -1815,7 +1923,7 @@ int quicGenerateResendStreamFrame(Quic_One_RTT_Packet_t *packet, uint16_t frameP
 }
 
 /* Packet Operations */
-int quicGenerateInitialPacket(Quic_Long_Packet_t *packet, const uint16_t srcConnId, const uint16_t dstConnId, void *connItem, const QUIC_NODE_STATUS status) {
+int quicGenerateInitialPacket(Quic_Long_Packet_t *packet, const uint16_t srcConnId, const uint16_t dstConnId, void *connItem, const QUIC_NODE_STATUS status, bool isResend) {
     memset(packet, 0, sizeof(Quic_Long_Packet_Header_t));
     packet->header.headerForm = 1;
     packet->header.fixedBit = 1;
@@ -1825,17 +1933,23 @@ int quicGenerateInitialPacket(Quic_Long_Packet_t *packet, const uint16_t srcConn
     packet->header.status = status;
 
     /* Initial packet send ACK handle and packet number handle */
-    if(packet->header.status == QUIC_CLIENT) {
+    if(packet->header.status == QUIC_CLIENT && !isResend) {
         QUIC_Client_Conn_Item_t *clientConnItem = connItem;
         clientConnItem->packetSendWindow[QUIC_INITIAL_PACKET_ACK].largestACK++;
         clientConnItem->packetSendWindow[QUIC_INITIAL_PACKET_ACK].minimumACK++;
         clientConnItem->packetSendWindow[QUIC_INITIAL_PACKET_ACK].ackRanges = NULL;
         packet->header.packetNumber = clientConnItem->packetSendWindow[QUIC_INITIAL_PACKET_ACK].largestACK;
-    } else if(packet->header.status == QUIC_SERVER) {
+    } else if(packet->header.status == QUIC_SERVER && !isResend) {
         QUIC_Server_Conn_Item_t *serverConnItem = connItem;
         serverConnItem->packetSendWindow[QUIC_INITIAL_PACKET_ACK].largestACK++;
         serverConnItem->packetSendWindow[QUIC_INITIAL_PACKET_ACK].minimumACK++;
         serverConnItem->packetSendWindow[QUIC_INITIAL_PACKET_ACK].ackRanges = NULL;
+        packet->header.packetNumber = serverConnItem->packetSendWindow[QUIC_INITIAL_PACKET_ACK].largestACK;
+    } else if (packet->header.status == QUIC_CLIENT && isResend) {
+        const QUIC_Client_Conn_Item_t *clientConnItem = connItem;
+        packet->header.packetNumber = clientConnItem->packetSendWindow[QUIC_INITIAL_PACKET_ACK].largestACK;
+    } else if (packet->header.status == QUIC_SERVER && isResend) {
+        const QUIC_Server_Conn_Item_t *serverConnItem = connItem;
         packet->header.packetNumber = serverConnItem->packetSendWindow[QUIC_INITIAL_PACKET_ACK].largestACK;
     }
     
@@ -1846,6 +1960,30 @@ int quicGenerateInitialPacket(Quic_Long_Packet_t *packet, const uint16_t srcConn
 
 int quicProcessInitialPacket(const Quic_Long_Packet_t *initialPacket, const UWB_Address_t peer, const TickType_t receiveTime) {
     const uint16_t payloadLen = initialPacket->header.length - sizeof(Quic_Long_Packet_Header_t);
+    /* filter the outmoded packet */
+    if (initialPacket->header.status == QUIC_CLIENT) {
+        if (initialPacket->header.dstConnId == 0) {
+            Map_Iter_t iter = mapIter(quicServerNode.conns.connItemsMap);
+            while (mapNext(&quicServerNode.conns.connItemsMap, &iter)) {
+                QUIC_Server_Conn_Item_t *connItem = iter.node->value;
+                if (connItem->peer == peer && connItem->dstConnId == initialPacket->header.srcConnId) {
+                    return SUCCESS; // the packet is outmoded, this connection is already created,  success means the packet is outmoded
+                }
+            }
+            // this connection is not created yet
+        } else {
+            QUIC_Server_Conn_Item_t *connItem = quicServerNode.conns.connItemGet(&quicServerNode.conns.connItemsMap, initialPacket->header.dstConnId);
+            if (connItem->packetReceiveWindow[QUIC_INITIAL_PACKET_ACK].largestACK >= initialPacket->header.packetNumber) {
+                return SUCCESS; // the packet is outmoded, this packet has been received,  success means the packet is outmoded
+            }
+        }
+    } else if (initialPacket->header.status == QUIC_SERVER) {
+        QUIC_Client_Conn_Item_t *connItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, initialPacket->header.dstConnId);
+        if (connItem->packetReceiveWindow[QUIC_INITIAL_PACKET_ACK].largestACK >= initialPacket->header.packetNumber) {
+            return SUCCESS; // the packet is outmoded, this packet has been received, success means the packet is outmoded
+        }
+    }
+
     uint16_t curPosLen = 0;
     while(curPosLen < payloadLen) {
         const uint8_t type = initialPacket->packetPayload[curPosLen];
@@ -1877,7 +2015,6 @@ int quicProcessInitialPacket(const Quic_Long_Packet_t *initialPacket, const UWB_
         /* ConnID Handle */
         connItem->dstConnId = initialPacket->header.srcConnId;
         /* Receive ACK */
-        // MARK
         ASSERT(connItem != NULL);
         connItem->packetReceiveWindow[QUIC_INITIAL_PACKET_ACK].largestACK = initialPacket->header.packetNumber;
         connItem->packetReceiveWindow[QUIC_INITIAL_PACKET_ACK].minimumACK = initialPacket->header.packetNumber;
@@ -1897,7 +2034,7 @@ int quicProcessInitialPacket(const Quic_Long_Packet_t *initialPacket, const UWB_
     return (int) initialPacket->header.length;
 }
 
-int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, const uint16_t srcConnId, const uint16_t dstConnId, void *connItem, const QUIC_NODE_STATUS status) {
+int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, const uint16_t srcConnId, const uint16_t dstConnId, void *connItem, const QUIC_NODE_STATUS status, bool isResend) {
     memset(packet, 0, sizeof(Quic_Long_Packet_Header_t));
     packet->header.headerForm = 1;
     packet->header.fixedBit = 1;
@@ -1907,17 +2044,23 @@ int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, const uint16_t srcCo
     packet->header.status = status;
 
     /* Handshake packet send ACK handle and packet number handle */
-    if(packet->header.status == QUIC_CLIENT) {
+    if(packet->header.status == QUIC_CLIENT && !isResend) {
         QUIC_Client_Conn_Item_t *clientConnItem = connItem;
         clientConnItem->packetSendWindow[QUIC_HANDSHAKE_PACKET_ACK].largestACK++;
         clientConnItem->packetSendWindow[QUIC_HANDSHAKE_PACKET_ACK].minimumACK++;
         clientConnItem->packetSendWindow[QUIC_HANDSHAKE_PACKET_ACK].ackRanges = NULL;
         packet->header.packetNumber = clientConnItem->packetSendWindow[QUIC_HANDSHAKE_PACKET_ACK].largestACK;
-    } else if(packet->header.status == QUIC_SERVER) {
+    } else if(packet->header.status == QUIC_SERVER && !isResend) {
         QUIC_Server_Conn_Item_t *serverConnItem = connItem;
         serverConnItem->packetSendWindow[QUIC_HANDSHAKE_PACKET_ACK].largestACK++;
         serverConnItem->packetSendWindow[QUIC_HANDSHAKE_PACKET_ACK].minimumACK++;
         serverConnItem->packetSendWindow[QUIC_HANDSHAKE_PACKET_ACK].ackRanges = NULL;
+        packet->header.packetNumber = serverConnItem->packetSendWindow[QUIC_HANDSHAKE_PACKET_ACK].largestACK;
+    } else if (packet->header.status == QUIC_CLIENT && isResend) {
+        const QUIC_Client_Conn_Item_t *clientConnItem = connItem;
+        packet->header.packetNumber = clientConnItem->packetSendWindow[QUIC_HANDSHAKE_PACKET_ACK].largestACK;
+    } else if (packet->header.status == QUIC_SERVER && isResend) {
+        const QUIC_Server_Conn_Item_t *serverConnItem = connItem;
         packet->header.packetNumber = serverConnItem->packetSendWindow[QUIC_HANDSHAKE_PACKET_ACK].largestACK;
     }
     
@@ -1928,6 +2071,19 @@ int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, const uint16_t srcCo
 
 int quicProcessHandshakePacket(Quic_Long_Packet_t *handshakePacket, const UWB_Address_t peer, TickType_t receiveTime) {
     const uint16_t payloadLen = handshakePacket->header.length - sizeof(Quic_Long_Packet_Header_t);
+    /* filter the outmoded packet */
+    if (handshakePacket->header.status == QUIC_CLIENT) {
+        QUIC_Server_Conn_Item_t *connItem = quicServerNode.conns.connItemGet(&quicServerNode.conns.connItemsMap, handshakePacket->header.dstConnId);
+        if (connItem->packetReceiveWindow[QUIC_HANDSHAKE_PACKET_ACK].largestACK >= handshakePacket->header.packetNumber) {
+            return SUCCESS; // the packet is outmoded, this packet has been received, success means the packet is outmoded
+        }
+    } else if (handshakePacket->header.status == QUIC_SERVER) {
+        QUIC_Client_Conn_Item_t *connItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, handshakePacket->header.dstConnId);
+        if (connItem->packetReceiveWindow[QUIC_HANDSHAKE_PACKET_ACK].largestACK >= handshakePacket->header.packetNumber) {
+            return SUCCESS; // the packet is outmoded, this packet has been received, success means the packet is outmoded
+        }
+    }
+
     uint16_t curPosLen = 0;
     while(curPosLen < payloadLen) {
         const uint8_t type = handshakePacket->packetPayload[curPosLen];
@@ -2098,7 +2254,7 @@ int quicProcessOneRTTPacket(const Quic_One_RTT_Packet_t *oneRTTPacket, TickType_
 }
 
 /* Message Operations */
-int quicClientSendConnRequest(const UWB_Address_t peer, TaskHandle_t userTaskHandle) {
+int quicClientSendConnRequest(const UWB_Address_t peer, const uint16_t connId ,TaskHandle_t userTaskHandle, bool isResend) {
     /* Steps:
      * 1. Generate initial packet
      * 2. Generate Hello frame
@@ -2112,37 +2268,44 @@ int quicClientSendConnRequest(const UWB_Address_t peer, TaskHandle_t userTaskHan
     dataTxPacket.header.ttl = 10;
     dataTxPacket.header.length = sizeof(UWB_Data_Packet_Header_t);
 
-    const int srcConnId = getNextSrcConnId();
-    const int dstConnId = 0;
-    /* Initialize local connection */
-    /* Because we issued a connection request, we need to be prepared to maintain the connection. */
-    if(quicClientNode.conns.size + 1 > quicClientNode.conns.capacity) {
-        DEBUG_PRINT("Connection is full, can not resolve this connection.\n");
-        return ERROR;
+    QUIC_Client_Conn_Item_t *connItem = NULL;
+    if (!isResend)
+    {
+        const int srcConnId = getNextSrcConnId();
+        const int dstConnId = 0;
+        /* Initialize local connection */
+        /* Because we issued a connection request, we need to be prepared to maintain the connection. */
+        if(quicClientNode.conns.size + 1 > quicClientNode.conns.capacity) {
+            DEBUG_PRINT("Connection is full, can not resolve this connection.\n");
+            return ERROR;
+        }
+        QUIC_Client_Conn_Item_t connItem_ = {0};
+        connItem_.connId = srcConnId;
+        connItem_.dstConnId = dstConnId;
+        connItem_.currentState = QUIC_CLIENT_CONN_STATE_INITIAL;
+        connItem_.peer = peer;
+        connItem_.userTaskHandle = userTaskHandle;
+        connItem_.freeBlockPoolHead = dataBlockInit(0);
+        /* since memset, packetTuples are already set 0. */
+        connItem = quicClientNode.conns.connItemSet(&quicClientNode.conns.connItemsMap, srcConnId, &connItem_, QUIC_CLIENT);
+        quicPacketInfoManagerInit(&connItem->packetInfoManager);
+        connItem->timer = xTimerCreate("quicClientConnTimer", pdMS_TO_TICKS(QUIC_CLIENT_CONN_TIMER_PERIOD_DEFAULT), pdTRUE, (void *)connItem->connId, quicClientConnTimerCallback); // create connection timer
+        connItem->isTimerWaitToDelete = false;
+        if (connItem->timer == NULL) {
+            DEBUG_PRINT("quicClientSendConnRequest: create timer failed.\n");
+            return ERROR;
+        }
+        xTimerStart(connItem->timer, 0);
+        quicStreamItemsMapInit(&connItem->sendStreams, QUIC_CLIENT);
+        quicClientNode.conns.size++;
+    } else {
+        connItem = quicClientNode.conns.connItemGet(&quicClientNode.conns.connItemsMap, connId);
     }
-    QUIC_Client_Conn_Item_t connItem_ = {0};
-    connItem_.connId = srcConnId;
-    connItem_.dstConnId = dstConnId;
-    connItem_.currentState = QUIC_CLIENT_CONN_STATE_INITIAL;
-    connItem_.peer = peer;
-    connItem_.userTaskHandle = userTaskHandle;
-    connItem_.freeBlockPoolHead = dataBlockInit(0);
-    /* since memset, packetTuples are already set 0. */
-    QUIC_Client_Conn_Item_t *connItem = quicClientNode.conns.connItemSet(&quicClientNode.conns.connItemsMap, srcConnId, &connItem_, QUIC_CLIENT);
-    quicPacketInfoManagerInit(&connItem->packetInfoManager);
-    connItem->timer = xTimerCreate("quicClientConnTimer", pdMS_TO_TICKS(QUIC_CLIENT_CONN_TIMER_PERIOD_DEFAULT), pdTRUE, (void *)connItem, quicClientConnTimerCallback); // create connection timer
-    if (connItem->timer == NULL) {
-        DEBUG_PRINT("quicHandleHelloFrame: create timer failed.\n");
-        return ERROR;
-    }
-    xTimerStart(connItem->timer, 0);
-    quicStreamItemsMapInit(&connItem->sendStreams, QUIC_CLIENT);
-    quicClientNode.conns.size++;
     /* Generate packets */
     int packetPos = 0;
     /* Generate initial packet */
     Quic_Long_Packet_t *initialPacket = (Quic_Long_Packet_t *) &dataTxPacket.payload[packetPos];
-    packetPos += quicGenerateInitialPacket(initialPacket, srcConnId, dstConnId, connItem, QUIC_CLIENT);
+    packetPos += quicGenerateInitialPacket(initialPacket, connItem->connId, connItem->dstConnId, connItem, QUIC_CLIENT, isResend);
     /* Generate frames */
     int framePos = 0;
     /* Generate Hello frame */
@@ -2153,12 +2316,12 @@ int quicClientSendConnRequest(const UWB_Address_t peer, TaskHandle_t userTaskHan
 
     DEBUG_PRINT("In quicClientSendConnRequest: initial packet send.\n"); /* add parameters according to the debugging situation. */
     uwbSendDataPacketBlock(&dataTxPacket);
-    quicStateTransport(srcConnId, QUIC_CLIENT);
+    if (!isResend) quicStateTransport(connItem->connId, QUIC_CLIENT);
 
     return SUCCESS;
 }
 
-int quicServerSendConnReply(const UWB_Address_t peer, const uint16_t connId) {
+int quicServerSendConnReply(const UWB_Address_t peer, const uint16_t connId, bool isResend) {
     /* Steps:
      * 1. Generate initial packet
      * 2. Generate ack frame
@@ -2179,7 +2342,7 @@ int quicServerSendConnReply(const UWB_Address_t peer, const uint16_t connId) {
     int packetPos = 0;
     /* Generate initial packet */
     Quic_Long_Packet_t *initialPacket = (Quic_Long_Packet_t *) &dataTxPacket.payload[packetPos];
-    packetPos += quicGenerateInitialPacket(initialPacket, connItem->connId, connItem->dstConnId, connItem, QUIC_SERVER);
+    packetPos += quicGenerateInitialPacket(initialPacket, connItem->connId, connItem->dstConnId, connItem, QUIC_SERVER, isResend);
     /* Generate frames */
     int framePos = 0;
     /* Generate ACK frame */
@@ -2187,7 +2350,7 @@ int quicServerSendConnReply(const UWB_Address_t peer, const uint16_t connId) {
     packetPos += framePos;
     /* Generate handshake packet */
     Quic_Long_Packet_t *handshakePacket = (Quic_Long_Packet_t *) &dataTxPacket.payload[packetPos];
-    packetPos += quicGenerateHandshakePacket(handshakePacket, connItem->connId, connItem->dstConnId, connItem, QUIC_SERVER);
+    packetPos += quicGenerateHandshakePacket(handshakePacket, connItem->connId, connItem->dstConnId, connItem, QUIC_SERVER, isResend);
     /* Generate frames */
     framePos = 0;
     /* Generate parameter frame */
@@ -2198,12 +2361,12 @@ int quicServerSendConnReply(const UWB_Address_t peer, const uint16_t connId) {
 
     DEBUG_PRINT("In quicServerSendConnReply: initial and handshake packets send.\n"); /* add parameters according to the debugging situation. */
     uwbSendDataPacketBlock(&dataTxPacket);
-    quicStateTransport(connId, QUIC_SERVER);
+    if (!isResend) quicStateTransport(connId, QUIC_SERVER);
 
     return SUCCESS;
 }
 
-int quicClientSendConnReply(const UWB_Address_t peer, const uint16_t connId) {
+int quicClientSendConnReply(const UWB_Address_t peer, const uint16_t connId, bool isResend) {
     /* Steps:
      * 1. Generate initial packet
      * 2. Generate ack frame
@@ -2223,7 +2386,7 @@ int quicClientSendConnReply(const UWB_Address_t peer, const uint16_t connId) {
     int packetPos = 0;
     /* Generate initial packet */
     Quic_Long_Packet_t *initialPacket = (Quic_Long_Packet_t *) &dataTxPacket.payload[packetPos];
-    packetPos += quicGenerateInitialPacket(initialPacket, connItem->connId, connItem->dstConnId, connItem, QUIC_CLIENT);
+    packetPos += quicGenerateInitialPacket(initialPacket, connItem->connId, connItem->dstConnId, connItem, QUIC_CLIENT, isResend);
     /* Generate frames */
     int framePos = 0;
     /* Generate ACK frame */
@@ -2231,7 +2394,7 @@ int quicClientSendConnReply(const UWB_Address_t peer, const uint16_t connId) {
     packetPos += framePos;
     /* Generate handshake packet */
     Quic_Long_Packet_t *handshakePacket = (Quic_Long_Packet_t *) &dataTxPacket.payload[packetPos];
-    packetPos += quicGenerateHandshakePacket(handshakePacket, connItem->connId, connItem->dstConnId, connItem, QUIC_CLIENT);
+    packetPos += quicGenerateHandshakePacket(handshakePacket, connItem->connId, connItem->dstConnId, connItem, QUIC_CLIENT, isResend);
     /* Generate frames */
     framePos = 0;
     /* Generate ACK frame */
@@ -2247,7 +2410,7 @@ int quicClientSendConnReply(const UWB_Address_t peer, const uint16_t connId) {
     return SUCCESS;
 }
 
-int quicServerSendConnDone(const UWB_Address_t peer, const uint16_t connId) {
+int quicServerSendConnDone(const UWB_Address_t peer, const uint16_t connId, bool isResend) {
     /* Steps:
      * 1. Generate handshake packet
      * 2. Generate handshake done frame
@@ -2266,7 +2429,7 @@ int quicServerSendConnDone(const UWB_Address_t peer, const uint16_t connId) {
     int packetPos = 0;
     /* Generate handshake packet */
     Quic_Long_Packet_t *handshakePacket = (Quic_Long_Packet_t *) &dataTxPacket.payload[packetPos];
-    packetPos += quicGenerateHandshakePacket(handshakePacket, connItem->connId, connItem->dstConnId, connItem, QUIC_SERVER);
+    packetPos += quicGenerateHandshakePacket(handshakePacket, connItem->connId, connItem->dstConnId, connItem, QUIC_SERVER, isResend);
     /* Generate frames */
     int framePos = 0;
     /* Generate handshake done frame */
@@ -2279,7 +2442,7 @@ int quicServerSendConnDone(const UWB_Address_t peer, const uint16_t connId) {
 
     DEBUG_PRINT("In quicServerSendConnDone: handshake and 1-RTT packets send.\n"); /* add parameters according to the debugging situation. */
     uwbSendDataPacketBlock(&dataTxPacket);
-    quicStateTransport(connId, QUIC_SERVER);
+    if (!isResend) quicStateTransport(connId, QUIC_SERVER);
 
     return SUCCESS;
 }
@@ -2327,20 +2490,14 @@ static void quicReadStreamClearCallback(const Map_Node_t *node) {
     quicReadStreamClear(streamItem);
 }
 
-static void quicServerConnClearCallback(const Map_Node_t *node) {
-    if (node == NULL) return;
-    QUIC_Server_Conn_Item_t *connItem = node->value;
-    if (connItem == NULL) return;
-    /* free the connection's space */
-    free(connItem);
-}
-
 int quicServerConnClose(const uint16_t connId) {
     QUIC_Server_Conn_Item_t *connItem = quicServerNode.conns.connItemGet(&quicServerNode.conns.connItemsMap, connId);
     if (connItem == NULL) {
         DEBUG_PRINT("quicServerConnClose: connection item is not exist.\n");
         return ERROR;
     }
+    /* change state machine */
+    connItem->currentState = QUIC_SERVER_CONN_STATE_CLOSE;
     /* clear all streams in the connection (include streams' buffer) */
     mapClear(&connItem->readStreams.streamsMap, quicReadStreamClearCallback);
     /* clear ack windows' ack ranges */
@@ -2352,10 +2509,14 @@ int quicServerConnClose(const uint16_t connId) {
         dataBlockClear(currBlock);
         currBlock = nextBlock;
     }
-    /* remove connection item */
-    char mapKey[10] = {0};
-    itoa(connId, &mapKey[0], 10);
-    mapRemove(&quicServerNode.conns.connItemsMap, &mapKey[0], quicServerConnClearCallback);
+    /* clean up timer */
+    connItem->isTimerWaitToDelete = xQueueSend(timerDeleteQueue, &connItem->timer, 0);
+    /* if timer can be deleted, then remove connection item */
+    if (connItem->isTimerWaitToDelete) {
+        char mapKey[10] = {0};
+        itoa(connId, &mapKey[0], 10);
+        mapRemove(&quicServerNode.conns.connItemsMap, &mapKey[0], quicServerConnClearCallback);
+    }
     /* return */
     return SUCCESS;
 }
@@ -2366,14 +2527,6 @@ static void quicSendStreamClearCallback(const Map_Node_t *node) {
     if (streamItem == NULL) return;
     /* clear the stream */
     quicSendStreamClear(streamItem);
-}
-
-static void quicClientConnClearCallback(const Map_Node_t *node) {
-    if (node == NULL) return;
-    QUIC_Client_Conn_Item_t *connItem = node->value;
-    if (connItem == NULL) return;
-    /* free the connection's space */
-    free(connItem);
 }
 
 int quicClientConnClose(uint16_t connId) {

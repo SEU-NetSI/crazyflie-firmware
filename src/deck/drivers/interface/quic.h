@@ -16,6 +16,8 @@
 #define QUIC_RX_PACKET_ITEM_SIZE sizeof(UWB_Packet_t)
 #define QUIC_STREAM_NOTIFY_QUEUE_SIZE 10
 #define QUIC_STREAM_NOTIFY_QUEUE_ITEM_SIZE sizeof(QUIC_Transport_Info_t)
+#define QUIC_TIMER_DELETE_QUEUE_SIZE 5
+#define QUIC_TIMER_DELETE_QUEUE_ITEM_SIZE sizeof(xTimerHandle)
 
 /* QUIC Constants */
 #define QUIC_LONG_PACKET_PAYLOAD_SIZE_MAX (ROUTING_DATA_PACKET_PAYLOAD_SIZE_MAX - 14)
@@ -243,6 +245,7 @@ typedef struct {
     QUIC_Packet_Info_Manager_t packetInfoManager; // only client 1-RTT packet will use it, store the packet info with RBTree
     DataBlock_t *freeBlockPoolHead;
     xTimerHandle timer;
+    bool isTimerWaitToDelete;
     uint16_t timerPeriod; // ms
     uint16_t connTimeout; // ms
     TickType_t lastReceiveTime; // timestamp, the value must be an integer multiple of the clock period
@@ -260,6 +263,7 @@ typedef struct {
     // uint16_t minimumFinishedStreamId; // int this connection, the minimum ended stream id, | ok | ok | minimumStreamId | nok | nok |
     DataBlock_t *freeBlockPoolHead;
     xTimerHandle timer;
+    bool isTimerWaitToDelete;
     uint16_t timerPeriod; // ms
     uint16_t connTimeout; // ms
     TickType_t lastReceiveTime; // timestamp, the value must be an integer multiple of the clock period
@@ -420,9 +424,9 @@ void quicInit();
 
 /* Quic Operations */
 /* Packet Operations */
-int quicGenerateInitialPacket(Quic_Long_Packet_t *packet, uint16_t srcConnId, uint16_t dstConnId, void *connItem, QUIC_NODE_STATUS status);
+int quicGenerateInitialPacket(Quic_Long_Packet_t *packet, uint16_t srcConnId, uint16_t dstConnId, void *connItem, QUIC_NODE_STATUS status, bool isResend);
 int quicProcessInitialPacket(const Quic_Long_Packet_t *initialPacket, UWB_Address_t peer, TickType_t receiveTime);
-int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, uint16_t srcConnId, uint16_t dstConnId, void *connItem, QUIC_NODE_STATUS status);
+int quicGenerateHandshakePacket(Quic_Long_Packet_t *packet, uint16_t srcConnId, uint16_t dstConnId, void *connItem, QUIC_NODE_STATUS status, bool isResend);
 int quicProcessHandshakePacket(Quic_Long_Packet_t *handshakePacket, UWB_Address_t peer, TickType_t receiveTime);
 int quicGenerateOneRTTPacket(Quic_One_RTT_Packet_t *packet, uint16_t dstConnId, QUIC_NODE_STATUS status);
 int quicProcessOneRTTPacket(const Quic_One_RTT_Packet_t *packet, TickType_t receiveTime);
@@ -440,10 +444,10 @@ int quicGenerateOneRTTPacketACKFrame(Quic_One_RTT_Packet_t *packet, uint16_t fra
 int quicHandleOneRTTPacketACKFrame(const Quic_One_RTT_Packet_t *packet, int pos);
 int quicGenerateResendStreamFrame(Quic_One_RTT_Packet_t *packet, uint16_t framePos, QUIC_Packet_Info_Node_t *packetInfo);
 /* Connection Operations */
-int quicClientSendConnRequest(UWB_Address_t peer, TaskHandle_t userTaskHandle);
-int quicServerSendConnReply(UWB_Address_t peer, uint16_t connId);
-int quicClientSendConnReply(UWB_Address_t peer, uint16_t connId);
-int quicServerSendConnDone(UWB_Address_t peer, uint16_t connId);
+int quicClientSendConnRequest(UWB_Address_t peer, uint16_t connId, TaskHandle_t userTaskHandle, bool isResend);
+int quicServerSendConnReply(UWB_Address_t peer, uint16_t connId, bool isResend);
+int quicClientSendConnReply(UWB_Address_t peer, uint16_t connId, bool isResend);
+int quicServerSendConnDone(UWB_Address_t peer, uint16_t connId, bool isResend);
 int quicServerSendACK(UWB_Address_t peer, uint16_t connId);
 int quicServerConnClose(uint16_t connId);
 int quicClientConnClose(uint16_t connId);

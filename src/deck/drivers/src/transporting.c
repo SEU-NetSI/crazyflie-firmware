@@ -35,7 +35,7 @@ UWB_Socket_t *uwbClientSocketCreate(void) {
  * @return: DWT_SUCCESS if the connection is established, DWT_ERROR if the connection is not established
  */
 int uwbClientConnect(UWB_Socket_t *socket, UWB_Address_t peer) {
-    quicClientSendConnRequest(peer, socket->currTaskHandle);
+    quicClientSendConnRequest(peer, 0, socket->currTaskHandle, false);
     uint32_t connectionID = 0;
     if(xTaskGenericNotifyWait(0, 0, 0, &connectionID, connTimeToWait) == pdTRUE) { // Wait for the connection to be established, notified in quic.c quicStateTransport.
         socket->connectionID = connectionID;
