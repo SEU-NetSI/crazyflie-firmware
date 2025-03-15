@@ -27,5 +27,5 @@ uint16_t getMappingRequestSeq();
 
 bool generateMappingReqPacket(mapping_req_packet_t* mappingReqPacket);
 bool sendMappingRequest(uint16_t destinationId, mapping_req_packet_t* mapping_req_packet);
-
+void processMappingRequest(Autofly_packet_t* packet);
 #endif

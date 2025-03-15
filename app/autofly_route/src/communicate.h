@@ -3,7 +3,7 @@
 #define DEBUG_MODULE "P2P"
 #include "stdint.h"
 #define MAPPING_REQUEST_PAYLOAD_LENGTH 1
-#define AUTOFLY_PACKET_MUT 60-4
+#define AUTOFLY_PACKET_MTU 60-4
 
 #define AIDECK_ID 0xFF
 
@@ -105,10 +105,9 @@ typedef struct
 {
     uint8_t sourceId;
     uint8_t destinationId;
-    uint8_t nextdestinationId;
     uint8_t packetType;
     uint8_t length;
-    uint8_t data[AUTOFLY_PACKET_MUT];
+    uint8_t data[AUTOFLY_PACKET_MTU];
 } Autofly_packet_t;   // 60
 
 void communicateInit();

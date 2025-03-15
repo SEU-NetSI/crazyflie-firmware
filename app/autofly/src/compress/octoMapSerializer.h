@@ -9,11 +9,13 @@
 #include "LZWCompress.h"
 #include "huffmanTree.h"
 
-#define MAX_OCTOMAP_SERIALIZER_LENGTH 8*1024
-#define MAX_OCTOMAP_DICT_LENGTH 4*1024
-#define MAX_OCTOMAP_DATA_LENGTH MAX_OCTOMAP_SERIALIZER_LENGTH+MAX_OCTOMAP_DICT_LENGTH
+#define MAX_OCTOMAP_SERIALIZER_LENGTH 2*1024
+#define MAX_OCTOMAP_DICT_LENGTH 1*1024
+#define MAX_OCTOMAP_DATA_LENGTH (MAX_OCTOMAP_SERIALIZER_LENGTH+MAX_OCTOMAP_DICT_LENGTH)
 
 #define CHECK_CODE_INIT_VALUE 0xff
+
+#define OCTOMAP_SERIALIZER_RESULT_HEADER_LENGTH (sizeof(octoMapSerializerResult_t) - MAX_OCTOMAP_DATA_LENGTH)
 
 typedef enum{
     FREE = 0,
@@ -37,12 +39,12 @@ typedef struct
     uint8_t maxDepth;        // max depth of the tree
     uint16_t width;
 
-    uint8_t checkCode;      // check code
+    uint8_t checkCode;       // check code
     DictType dictType;       // 字典类型
-    uint16_t dictLength;         // 字典长度
+    uint16_t dictLength;     // 字典长度
     uint16_t dataLength;     // data length
     uint8_t data[MAX_OCTOMAP_DATA_LENGTH];
-}octoMapSerializerResult_t;
+} octoMapSerializerResult_t;
 
 void initOctoMapSerializerResult(octoMapSerializerResult_t *result);
 

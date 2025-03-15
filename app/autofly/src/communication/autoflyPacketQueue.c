@@ -14,8 +14,9 @@ void initAutoflyPacketQueue(Autofly_packet_Queue_t *queue){
     queue->front = 0;
     queue->tail = 0;
     queue->len = 0;
-    queue->mutex = xSemaphoreCreateMutex();
-    if(queue->mutex == NULL){
+    queue->mutexWriteWrite = xSemaphoreCreateMutex();
+    queue->mutexWriteRead = xSemaphoreCreateMutex();
+    if(queue->mutexWriteWrite == NULL || queue->mutexWriteRead == NULL){
         DEBUG_PRINT("[initAutoflyPacketQueue]Create mutex failed\n");
     }
     for(int i = 0; i < MAX_AUTOFLY_PACKET_QUEUE_SIZE; i++){
@@ -27,28 +28,37 @@ void initAutoflyPacketQueue(Autofly_packet_Queue_t *queue){
     }
 }
 void pushAutoflyPacketQueue(Autofly_packet_Queue_t *queue, Autofly_packet_t* data){
-    // 先占信号量,防止写冲突
-    xSemaphoreTake(queue->mutex, portMAX_DELAY);
-    // 死等队列空闲
-    // todo，考虑优化超时等待
-    while (!isAutoflyPacketQueueFull(queue))
+    // DEBUG_PRINT("[pushAutoflyPacketQueue start]len = %d\n", queue->len);
+    // 先占用写写信号量
+    xSemaphoreTake(queue->mutexWriteWrite, portMAX_DELAY);
+    // 死等队列空闲,待优化
+    while (isAutoflyPacketQueueFull(queue))
     {
         vTaskDelay(M2T(CHECK_INTERVAL));
     }
-    
+    // DEBUG_PRINT("[pushAutoflyPacketQueue]Get WriteWriteLock\n");
+    // 修改内容，占有写读信号量
+    xSemaphoreTake(queue->mutexWriteRead, portMAX_DELAY);
+    // DEBUG_PRINT("[pushAutoflyPacketQueue]Get WriteReadLock\n");
     memcpy(&queue->data[queue->tail], data, sizeof(Autofly_packet_t));
     queue->tail = (queue->tail + 1) % MAX_AUTOFLY_PACKET_QUEUE_SIZE;
     queue->len++;
+    // DEBUG_PRINT("[pushAutoflyPacketQueue]len = %d\n", queue->len);
+    // 释放信号量
+    xSemaphoreGive(queue->mutexWriteRead);
+    xSemaphoreGive(queue->mutexWriteWrite);
 }
 bool popAutoflyPacketQueue(Autofly_packet_Queue_t *queue, Autofly_packet_t* data){
-    // 读不需要占用信号量
     // 等待队列非空
     if(isAutoflyPacketQueueEmpty(queue)){
         return false;
     }
+    xSemaphoreTake(queue->mutexWriteRead, portMAX_DELAY);
     memcpy(data, &queue->data[queue->front], sizeof(Autofly_packet_t));
     queue->front = (queue->front + 1) % MAX_AUTOFLY_PACKET_QUEUE_SIZE;
     queue->len--;
+    // DEBUG_PRINT("[popAutoflyPacketQueue]len = %d\n", queue->len);
+    xSemaphoreGive(queue->mutexWriteRead);
     return true;
 }
 

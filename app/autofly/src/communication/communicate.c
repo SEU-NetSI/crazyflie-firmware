@@ -26,8 +26,7 @@ static Autofly_packet_Queue_t TxQueue;
 
 void ListeningInit();
 void P2PCallbackHandler(P2PPacket *p);
-void processReq(Autofly_packet_t* autoflyPacket);
-void processResp(Autofly_packet_t* autoflyPacket);
+void processAutoflyPacket(Autofly_packet_t* autoflyPacket);
 void processPathResp();
 
 void TxTask(void * parameter);
@@ -49,6 +48,7 @@ void CommunicateInit(){
     initAutoflyPacketQueue(&TxQueue);
     mappingCommunicationInit();
     exploreCommunicationInit();
+    octoMapDataCommunicationInit();
     ListeningInit();
     // 启动发送任务
     xTaskCreate(TxTask, AUTOFLY_TX_TASK_NAME, AUTOFLY_TX_TASK_STACK_SIZE, NULL, AUTOFLY_TX_TASK_PRI, &autoflyTxTaskHandle);
@@ -59,7 +59,6 @@ void CommunicateTerminate(){
 }
 
 bool sendAutoFlyPacket(uint16_t destAddress, packetType_t packetType, uint8_t *data, uint8_t length){
-
     Autofly_packet_t Autofly_packet;
     Autofly_packet.header.sourceId = getSourceId();
     Autofly_packet.header.destinationId = destAddress;
@@ -80,40 +79,41 @@ void P2PCallbackHandler(P2PPacket *p)
 {
     // Parse the P2P packet
     uint8_t rssi = p->rssi;
-    Autofly_packet_t autoflyPacket;
-    memcpy(&autoflyPacket, &p->data, sizeof(autoflyPacket));
-
-    if (autoflyPacket.header.destinationId != getSourceId())
+    Autofly_packet_t* autoflyPacket = (Autofly_packet_t*)&p->data;
+    // DEBUG_PRINT("P2P: Received packet from(%d) to (%d), packetType: %x\n", autoflyPacket->header.sourceId, autoflyPacket->header.destinationId, autoflyPacket->header.packetType);
+    if (autoflyPacket->header.destinationId != getSourceId() && autoflyPacket->header.destinationId != BROADCAST_LIDAR_ID)
     {
         return;
     }
 
-    DEBUG_PRINT("[LiDAR-STM32]P2P: Receive response from: %d, RSSI: -%d dBm, respType: %x\n", 
-        autoflyPacket.header.sourceId, rssi, autoflyPacket.header.packetType);
-
-    if(autoflyPacket.header.packetType == MAPPING_REQ ||
-        autoflyPacket.header.packetType == EXPLORE_REQ ||
-        autoflyPacket.header.packetType == PATH_REQ ||
-        autoflyPacket.header.packetType == TERMINATE){
-            processReq(&autoflyPacket);
-    }
-    else if(autoflyPacket.header.packetType == EXPLORE_RESP ||
-        autoflyPacket.header.packetType == PATH_RESP ||
-        autoflyPacket.header.packetType == CLUSTER_RESP){
-            processResp(&autoflyPacket);
-    }
-    // TODO:使用 xQueueSend 来将下一步坐标存入队列
+    processAutoflyPacket(autoflyPacket);
 }
 
-void processReq(Autofly_packet_t* autoflyPacket){
-    DEBUG_PRINT("processReq\n");
-}
-
-void processResp(Autofly_packet_t* autoflyPacket){
-    switch (autoflyPacket->header.packetType)
+void processAutoflyPacket(Autofly_packet_t* autoflyPacket){
+    switch (autoflyPacket->header.packetType & 0xF0)
     {
-        case EXPLORE_RESP:{
+        case MAPPING_DATA:{
+            processMappingRequest(autoflyPacket);
+            break;
+        }
+        case EXPLORE_DATA:{
             processExploreResp(autoflyPacket);
+            break;
+        }
+        case PATH_DATA:{
+            
+            break;
+        }
+        case CLUSTER_DATA:{
+            
+            break;
+        }
+        case CONTROL_DATA:{
+            
+            break;
+        }
+        case OCTOMAP_DATA:{
+            processOctoMapData(autoflyPacket);
             break;
         }
         default:{
@@ -123,15 +123,21 @@ void processResp(Autofly_packet_t* autoflyPacket){
 }
 
 void TxTask(void * parameter){
+    DEBUG_PRINT("P2P: TxTask start\n");
     Autofly_packet_t autoflyPacket;
     while(1){
         if(popAutoflyPacketQueue(&TxQueue, &autoflyPacket)){
             P2PPacket packet;
             packet.port = 0x00;
             packet.size = autoflyPacket.header.length;
+            memcpy(&packet.data, &autoflyPacket, sizeof(autoflyPacket));
             // Send the P2P packet
             if(!radiolinkSendP2PPacketBroadcast(&packet)){
                 DEBUG_PRINT("[LiDAR-STM32]P2P: Send packet failed\n");
+            }
+            else{
+                // Autofly_packet_t* testAutoFlyPacket = (Autofly_packet_t*)&packet.data;
+                // DEBUG_PRINT("[LiDAR-STM32]P2P: Send packet to: %d, packetType: %x\n", testAutoFlyPacket->header.destinationId, testAutoFlyPacket->header.packetType);
             }
             vTaskDelay(M2T(TX_INTERVAL));
         }

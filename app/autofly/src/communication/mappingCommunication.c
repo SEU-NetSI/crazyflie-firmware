@@ -52,3 +52,7 @@ bool sendMappingRequest(uint16_t destinationId, mapping_req_packet_t* mapping_re
 {
     return sendAutoFlyPacket(destinationId, MAPPING_REQ, (uint8_t*)mapping_req_packet, sizeof(mapping_req_packet_t));
 }
+
+void processMappingRequest(Autofly_packet_t* packet){
+    
+}

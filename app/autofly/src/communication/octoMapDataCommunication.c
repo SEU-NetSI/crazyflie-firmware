@@ -13,23 +13,12 @@
 
 #include "radiolink.h"
 
-#define FRAGMENT_SEND_INTERVAL 20 // 分片发送间隔
-
-#define TX_ACK_WAIT_TIME_INIT 50 // ACK等待次数初值
-#define MAX_TX_RETRY_TIME 3 // 最大重传次数
-
-#define RX_DATA_UPDATE_WAIT_TIME_INIT 50 // 数据更新等待次数初值
-#define MAX_RX_SACK_SEND_TIME 3 // 最大SACK发送次数
-
-#define MAX_OCTOMAP_SEND_SLEEP_TIME 1000 // 发送休眠时间
-#define MAX_OCTOMAP_SEND_SLEEP_CHECK_INTERVAL 10 // 发送休眠检测间隔
-
 static TaskHandle_t octoMapDataCommunicationTxTaskHandle;
 static TaskHandle_t octoMapDataCommunicationRxTaskHandle;
 
 static OCTOMAP_DATA_COMMUNICATION_STATE TX_STATE; // 发送状态
 static SemaphoreHandle_t muDataTX;
-static uint8_t dataTXBuffer[MAX_OCTOMAP_DATA_LENGTH];
+static uint8_t dataTXBuffer[MAX_BUFFER_SIZE];
 static uint16_t dataTXLength;
 static uint16_t dataTXId; // 数据ID,检测数据是否被更新
 static uint8_t destinationTxId; // 目标地址
@@ -38,22 +27,24 @@ static Autofly_packet_t lastReceiveSackPacket; // 上一个SACK包
 
 static OCTOMAP_DATA_COMMUNICATION_STATE RX_STATE; // 接收状态
 static SemaphoreHandle_t muDataRX;
-static uint8_t dataRXBuffer[MAX_OCTOMAP_DATA_LENGTH];
+static uint8_t dataRXBuffer[MAX_BUFFER_SIZE];
 static uint16_t dataRXLength;
 static uint8_t sourceRxId; // 目标地址
 static uint16_t dataRXId; // 数据ID,检测数据是否被更新
-static uint8_t checkFLag[64]; // 检测某位片数据是否被接收
+static uint8_t checkFLag[32]; // 检测某位片数据是否被接收
 static uint8_t totalCountNum; // 总数据数量
 static uint8_t curCountNum; // 当前接收的数据数量
 
-static uint8_t TxAckTimeoutTimes; // 发送响应超时时间
-static uint8_t maxTxAckWaitTimes; // ACK最大超时时间
+static uint16_t TxAckTimeoutTimes; // 发送响应超时时间
+static uint16_t maxTxAckWaitTimes; // ACK最大超时时间
 static uint8_t retryTimes; // 重传次数
 
-static uint8_t RxDataUpdateTimeoutTimes; // 接收数据更新超时次数
-static uint8_t maxRxDataUpdateWaitTimes; // 数据更新最大等待次数
+static uint16_t RxDataUpdateTimeoutTimes; // 接收数据更新超时次数
+static uint16_t maxRxDataUpdateWaitTimes; // 数据更新最大等待次数
 static uint8_t RxSackSendTimes; // SACK发送次数
 static octoMapPacket_Sack_t lastSendSackPacket; // 上一个SACK包
+
+// extern TaskHandle_t testTaskHandle;
 
 void octoMapDataCommunicationRxTask(void * parameter);
 void octoMapDataCommunicationTxTask(void * parameter);
@@ -74,7 +65,7 @@ void octoMapDataCommunicationRxInit(){
     RX_STATE = IDLE;
     dataRXLength = 0;
     dataRXId = 0;
-    memset(checkFLag, 0, 64);
+    memset(checkFLag, 0, 32);
     curCountNum = 0;
 
     RxDataUpdateTimeoutTimes = 0;
@@ -93,10 +84,11 @@ void octoMapDataCommunicationTxInit(){
 }
 
 
-bool sendOctoMapData(uint16_t destAddress, uint8_t *data, uint8_t length){
+bool sendOctoMapData(uint16_t destAddress, uint8_t *data, uint16_t length){
     // 进入发送状态
     xSemaphoreTake(muDataTX, portMAX_DELAY);
     TX_STATE = DATA_SENDING;
+    // DEBUG_PRINT("[sendOctoMapData]data length = %d\n", length);
     // 初始化响应超时时间、最大超时时间和重传次数
     TxAckTimeoutTimes = 0;
     maxTxAckWaitTimes = TX_ACK_WAIT_TIME_INIT;
@@ -106,8 +98,8 @@ bool sendOctoMapData(uint16_t destAddress, uint8_t *data, uint8_t length){
     // 更新数据ID和目标地址
     dataTXId++;
     destinationTxId = destAddress;
-    if(length > MAX_OCTOMAP_DATA_LENGTH){
-        DEBUG_PRINT("[sendOctoMapData]data is too long, dataTXBuffer maxLength = %d, data length = %d\n", MAX_OCTOMAP_DATA_LENGTH, length);
+    if(length > MAX_BUFFER_SIZE){
+        DEBUG_PRINT("[sendOctoMapData]data is too long, dataTXBuffer maxLength = %d, data length = %d\n", MAX_BUFFER_SIZE, length);
         TX_STATE = FAILED;
         return false;
     }
@@ -122,27 +114,27 @@ bool sendOctoMapData(uint16_t destAddress, uint8_t *data, uint8_t length){
         dataTXLength = length;
         // 分片发送，不足一片也按一片发送
         // 计算分片数量,向上取整
-        uint8_t fragementCount = ((dataTXLength + MAX_FRAGEMENT_DATA_LENGTH - 1) / MAX_FRAGEMENT_DATA_LENGTH);
-        for (int i = 0; i < fragementCount; i++)
+        uint16_t fragmentCount = ((dataTXLength + MAX_FRAGEMENT_DATA_LENGTH - 1) / MAX_FRAGEMENT_DATA_LENGTH);
+        for (int i = 0; i < fragmentCount; i++)
         {
-            octoMapFragement_t fragement;
-            fragement.fragementHeader.dataId = dataTXId;
-            fragement.fragementHeader.fragementId = i;
-            fragement.fragementHeader.fragementCount = fragementCount;
-            if(i == fragementCount - 1){
-                fragement.fragementHeader.fragementLength = dataTXLength - i*MAX_FRAGEMENT_DATA_LENGTH;
+            octoMapFragement_t fragment;
+            fragment.fragmentHeader.dataId = dataTXId;
+            fragment.fragmentHeader.fragmentId = i;
+            fragment.fragmentHeader.fragmentCount = fragmentCount;
+            if(i == fragmentCount - 1){
+                fragment.fragmentHeader.fragmentLength = dataTXLength - i*MAX_FRAGEMENT_DATA_LENGTH;
             }
             else{
-                fragement.fragementHeader.fragementLength = MAX_FRAGEMENT_DATA_LENGTH;
+                fragment.fragmentHeader.fragmentLength = MAX_FRAGEMENT_DATA_LENGTH;
             }
-            memcpy(fragement.data, dataTXBuffer+i*MAX_FRAGEMENT_DATA_LENGTH, fragement.fragementHeader.fragementLength);
-            sendAutoFlyPacket(destAddress, OCTOMAP_DATA_FRAGEMENT, (uint8_t*)&fragement, fragement.fragementHeader.fragementLength + sizeof(octoMapFragmentHeader_t));
+            memcpy(fragment.data, dataTXBuffer+i*MAX_FRAGEMENT_DATA_LENGTH, fragment.fragmentHeader.fragmentLength);
+            sendAutoFlyPacket(destAddress, OCTOMAP_DATA_FRAGEMENT, (uint8_t*)&fragment, fragment.fragmentHeader.fragmentLength + sizeof(octoMapFragmentHeader_t));
             vTaskDelay(M2T(FRAGMENT_SEND_INTERVAL));
         }
     }
     // 数据发送完成
     xSemaphoreGive(muDataTX);
-    TX_STATE = DATA_SENDED;
+    TX_STATE = DATA_SENT;
 }
 
 bool sendOctomapSack(){
@@ -286,39 +278,40 @@ bool processOctoMapFragMent(Autofly_packet_t *packet){
     }
     xSemaphoreTake(muDataRX, portMAX_DELAY);
     RX_STATE = DATA_RECEIVING;
-    octoMapFragement_t *fragement = (octoMapFragement_t*)packet->data;
+    octoMapFragement_t *fragment = (octoMapFragement_t*)packet->data;
     bool res = false;
-    if(packet->header.sourceId == sourceRxId && fragement->fragementHeader.dataId < dataRXId){
+    if(packet->header.sourceId == sourceRxId && fragment->fragmentHeader.dataId < dataRXId){
         // 同一个源设备发送的数据，数据id小于当前数据id，代表已经是历史数据
         octoMapPacket_Error_t error;
-        error.dataId = fragement->fragementHeader.dataId;
+        error.dataId = fragment->fragmentHeader.dataId;
         sendAutoFlyPacket(packet->header.sourceId, OCTOMAP_ERROR_HAS_PROCESSED, (uint8_t*)&error, sizeof(octoMapPacket_Error_t));
     }
     else{
-        if(RX_STATE = IDLE | fragement->fragementHeader.dataId > dataRXId){
+        DEBUG_PRINT("[processOctoMapData]dataId = %d, fragmentId = %d, maxFragementId = %d\n", fragment->fragmentHeader.dataId, fragment->fragmentHeader.fragmentId, fragment->fragmentHeader.fragmentCount); 
+        if(RX_STATE = IDLE | fragment->fragmentHeader.dataId > dataRXId){
             // 新数据,接收到新数据代表旧数据已被抛弃
-            dataRXId = fragement->fragementHeader.dataId;
+            dataRXId = fragment->fragmentHeader.dataId;
             dataRXLength = 0;
             curCountNum = 0;
-            memset(checkFLag, 0, 64);
+            memset(checkFLag, 0, 32);
             sourceRxId = packet->header.sourceId;
-            totalCountNum = fragement->fragementHeader.fragementCount;
+            totalCountNum = fragment->fragmentHeader.fragmentCount;
         }
         // 同一组数据
         // 判断是否重复
-        uint8_t index = fragement->fragementHeader.fragementId / 8;
-        uint8_t offset = fragement->fragementHeader.fragementId % 8;
+        uint8_t index = fragment->fragmentHeader.fragmentId / 8;
+        uint8_t offset = fragment->fragmentHeader.fragmentId % 8;
         if(checkFLag[index] & (1 << offset)){
             // 重复数据
-            DEBUG_PRINT("[processOctoMapData]repeat data, dataId = %d, fragementId = %d\n", fragement->fragementHeader.dataId, fragement->fragementHeader.fragementId);
+            DEBUG_PRINT("[processOctoMapData]repeat data, dataId = %d, fragmentId = %d\n", fragment->fragmentHeader.dataId, fragment->fragmentHeader.fragmentId);
             res = false;
         }
         else{
             // 未重复
-            memcpy(dataRXBuffer + fragement->fragementHeader.fragementId * MAX_FRAGEMENT_DATA_LENGTH, fragement->data, fragement->fragementHeader.fragementLength);
+            memcpy(dataRXBuffer + fragment->fragmentHeader.fragmentId * MAX_FRAGEMENT_DATA_LENGTH, fragment->data, fragment->fragmentHeader.fragmentLength);
             checkFLag[index] |= (1 << offset);
             curCountNum++;
-            dataRXLength += fragement->fragementHeader.fragementLength;
+            dataRXLength += fragment->fragmentHeader.fragmentLength;
             // 接收到新数据清空接收数据更新超时时间、最大超时时间和SACK发送时间
             RxDataUpdateTimeoutTimes = 0;
             if(maxRxDataUpdateWaitTimes > RX_DATA_UPDATE_WAIT_TIME_INIT){
@@ -328,11 +321,11 @@ bool processOctoMapFragMent(Autofly_packet_t *packet){
             if(curCountNum == totalCountNum){
                 // 数据接收完
                 // todo: 处理数据
-
+                DEBUG_PRINT("[processOctoMapData]data received, dataId = %d, dataLength = %d\n", dataRXId, dataRXLength);
                 // 数据处理完,清空数据
                 curCountNum = 0;
                 dataRXId ++;
-                memset(checkFLag, 0, 64);
+                memset(checkFLag, 0, 32);
                 RX_STATE = DATA_RECEIVED;
             }
             else{
@@ -379,24 +372,24 @@ bool processOctoMapPacket_Sack(Autofly_packet_t *packet){
         // 缺失数据重传，转入数据发送状态
         xSemaphoreTake(muDataTX, portMAX_DELAY);
         TX_STATE = DATA_SENDING;
-        uint8_t fragementCount = ((dataTXLength + MAX_FRAGEMENT_DATA_LENGTH - 1) / MAX_FRAGEMENT_DATA_LENGTH);
+        uint8_t fragmentCount = ((dataTXLength + MAX_FRAGEMENT_DATA_LENGTH - 1) / MAX_FRAGEMENT_DATA_LENGTH);
         if(sack->header.type == DISCRETE){
             for (int i = 0; i < sack->header.length; i++)
             {
                 // 重发丢失数据
-                uint8_t fragementId = sack->missDataId[i];
-                octoMapFragement_t fragement;
-                fragement.fragementHeader.dataId = dataTXId;
-                fragement.fragementHeader.fragementId = fragementId;
-                fragement.fragementHeader.fragementCount = fragementCount;
-                if(fragementId == fragementCount - 1){
-                    fragement.fragementHeader.fragementLength = dataTXLength - fragementId*MAX_FRAGEMENT_DATA_LENGTH;
+                uint8_t fragmentId = sack->missDataId[i];
+                octoMapFragement_t fragment;
+                fragment.fragmentHeader.dataId = dataTXId;
+                fragment.fragmentHeader.fragmentId = fragmentId;
+                fragment.fragmentHeader.fragmentCount = fragmentCount;
+                if(fragmentId == fragmentCount - 1){
+                    fragment.fragmentHeader.fragmentLength = dataTXLength - fragmentId*MAX_FRAGEMENT_DATA_LENGTH;
                 }
                 else{
-                    fragement.fragementHeader.fragementLength = MAX_FRAGEMENT_DATA_LENGTH;
+                    fragment.fragmentHeader.fragmentLength = MAX_FRAGEMENT_DATA_LENGTH;
                 }
-                memcpy(fragement.data, dataTXBuffer+fragementId*MAX_FRAGEMENT_DATA_LENGTH, fragement.fragementHeader.fragementLength);
-                sendAutoFlyPacket(packet->header.sourceId, OCTOMAP_DATA_FRAGEMENT, (uint8_t*)&fragement, fragement.fragementHeader.fragementLength + sizeof(octoMapFragmentHeader_t));
+                memcpy(fragment.data, dataTXBuffer+fragmentId*MAX_FRAGEMENT_DATA_LENGTH, fragment.fragmentHeader.fragmentLength);
+                sendAutoFlyPacket(packet->header.sourceId, OCTOMAP_DATA_FRAGEMENT, (uint8_t*)&fragment, fragment.fragmentHeader.fragmentLength + sizeof(octoMapFragmentHeader_t));
                 vTaskDelay(M2T(FRAGMENT_SEND_INTERVAL));
             }
         }else{
@@ -409,30 +402,31 @@ bool processOctoMapPacket_Sack(Autofly_packet_t *packet){
                 for (int j = start; j <= end; j++)
                 {
                     // 重发丢失数据
-                    octoMapFragement_t fragement;
-                    fragement.fragementHeader.dataId = dataTXId;
-                    fragement.fragementHeader.fragementId = j;
-                    fragement.fragementHeader.fragementCount = fragementCount;
-                    if(j == fragementCount - 1){
-                        fragement.fragementHeader.fragementLength = dataTXLength - j*MAX_FRAGEMENT_DATA_LENGTH;
+                    octoMapFragement_t fragment;
+                    fragment.fragmentHeader.dataId = dataTXId;
+                    fragment.fragmentHeader.fragmentId = j;
+                    fragment.fragmentHeader.fragmentCount = fragmentCount;
+                    if(j == fragmentCount - 1){
+                        fragment.fragmentHeader.fragmentLength = dataTXLength - j*MAX_FRAGEMENT_DATA_LENGTH;
                     }
                     else{
-                        fragement.fragementHeader.fragementLength = MAX_FRAGEMENT_DATA_LENGTH;
+                        fragment.fragmentHeader.fragmentLength = MAX_FRAGEMENT_DATA_LENGTH;
                     }
-                    memcpy(fragement.data, dataTXBuffer+j*MAX_FRAGEMENT_DATA_LENGTH, fragement.fragementHeader.fragementLength);
-                    sendAutoFlyPacket(packet->header.sourceId, OCTOMAP_DATA_FRAGEMENT, (uint8_t*)&fragement, fragement.fragementHeader.fragementLength + sizeof(octoMapFragmentHeader_t));
+                    memcpy(fragment.data, dataTXBuffer+j*MAX_FRAGEMENT_DATA_LENGTH, fragment.fragmentHeader.fragmentLength);
+                    sendAutoFlyPacket(packet->header.sourceId, OCTOMAP_DATA_FRAGEMENT, (uint8_t*)&fragment, fragment.fragmentHeader.fragmentLength + sizeof(octoMapFragmentHeader_t));
                     vTaskDelay(M2T(FRAGMENT_SEND_INTERVAL));
                 }
             }
         }
         // 缺失数据重传完成
         xSemaphoreGive(muDataTX);
-        TX_STATE = DATA_SENDED;
+        TX_STATE = DATA_SENT;
     }
     
 }
 
 void retrySendData(){
+    DEBUG_PRINT("[retrySendData]retry send data, retryTimes = %d,maxwaitTimes = %d\n", retryTimes, maxTxAckWaitTimes);
     // 重传
     if(isSackReceived){
         processOctoMapPacket_Sack(&lastReceiveSackPacket);
@@ -442,25 +436,25 @@ void retrySendData(){
         // 计算分片数量,向上取整
         xSemaphoreTake(muDataTX, portMAX_DELAY);
         TX_STATE = DATA_SENDING;
-        uint8_t fragementCount = ((dataTXLength + MAX_FRAGEMENT_DATA_LENGTH - 1) / MAX_FRAGEMENT_DATA_LENGTH);
-        for (int i = 0; i < fragementCount; i++)
+        uint8_t fragmentCount = ((dataTXLength + MAX_FRAGEMENT_DATA_LENGTH - 1) / MAX_FRAGEMENT_DATA_LENGTH);
+        for (int i = 0; i < fragmentCount; i++)
         {
-            octoMapFragement_t fragement;
-            fragement.fragementHeader.dataId = dataTXId;
-            fragement.fragementHeader.fragementId = i;
-            fragement.fragementHeader.fragementCount = fragementCount;
-            if(i == fragementCount - 1){
-                fragement.fragementHeader.fragementLength = dataTXLength - i*MAX_FRAGEMENT_DATA_LENGTH;
+            octoMapFragement_t fragment;
+            fragment.fragmentHeader.dataId = dataTXId;
+            fragment.fragmentHeader.fragmentId = i;
+            fragment.fragmentHeader.fragmentCount = fragmentCount;
+            if(i == fragmentCount - 1){
+                fragment.fragmentHeader.fragmentLength = dataTXLength - i*MAX_FRAGEMENT_DATA_LENGTH;
             }
             else{
-                fragement.fragementHeader.fragementLength = MAX_FRAGEMENT_DATA_LENGTH;
+                fragment.fragmentHeader.fragmentLength = MAX_FRAGEMENT_DATA_LENGTH;
             }
-            memcpy(fragement.data, dataTXBuffer+i*MAX_FRAGEMENT_DATA_LENGTH, fragement.fragementHeader.fragementLength);
-            sendAutoFlyPacket(destinationTxId, OCTOMAP_DATA_FRAGEMENT, (uint8_t*)&fragement, fragement.fragementHeader.fragementLength + sizeof(octoMapFragmentHeader_t));
+            memcpy(fragment.data, dataTXBuffer+i*MAX_FRAGEMENT_DATA_LENGTH, fragment.fragmentHeader.fragmentLength);
+            sendAutoFlyPacket(destinationTxId, OCTOMAP_DATA_FRAGEMENT, (uint8_t*)&fragment, fragment.fragmentHeader.fragmentLength + sizeof(octoMapFragmentHeader_t));
             vTaskDelay(M2T(FRAGMENT_SEND_INTERVAL));
         }
         xSemaphoreGive(muDataTX);
-        TX_STATE = DATA_SENDED;
+        TX_STATE = DATA_SENT;
     }
 }
 
@@ -480,7 +474,7 @@ void octoMapDataCommunicationTxTask(void * parameter){
                 break;
             case DATA_SENDING:
                 break;
-            case DATA_SENDED:
+            case DATA_SENT:
                 // 发送完成转入ACK等待状态
                 TX_STATE = ACK_WAIT;
                 break;
@@ -501,13 +495,14 @@ void octoMapDataCommunicationTxTask(void * parameter){
                 maxTxAckWaitTimes *= 2;
                 break;
             case RETRY:
-                retryTimes++;
-                if(retryTimes > MAX_TX_RETRY_TIME){
+                if(retryTimes >= MAX_TX_RETRY_TIME){
                     octoMapPacket_Error_t error;
                     error.dataId = dataTXId;
+                    DEBUG_PRINT("[retrySendData]retry send times is too much, retryTimes = %d\n", retryTimes);
                     sendAutoFlyPacket(destinationTxId, OCTOMAP_ERROR_TX_WAITING_TIMEOUT, (uint8_t*)&error, sizeof(octoMapPacket_Error_t));
                     TX_STATE = FAILED;
                 }else{
+                    retryTimes++;
                     retrySendData();
                 }
                 break;
@@ -589,5 +584,4 @@ void octoMapDataCommunicationRxTask(void * parameter){
         }
         vTaskDelay(M2T(STATE_CHECK_INTERVAL));
     }
-    
 }

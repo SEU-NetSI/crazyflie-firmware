@@ -36,7 +36,7 @@
 #define WIDTH_Z TREE_CENTER_Z * 2
 #define TREE_RESOLUTION 4
 #define TREE_MAX_DEPTH 6
-#define NODE_SET_SIZE 400
+#define NODE_SET_SIZE 200
 
 #define LOG_ODDS_OCCUPIED 6
 #define LOG_ODDS_FREE 0

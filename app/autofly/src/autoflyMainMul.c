@@ -16,13 +16,25 @@
 #include "mappingCommunication.h"
 #include "exploreCommunication.h"
 
+#include "octoMapSerializer.h"
+#include "octoMapDataCommunication.h"
+
+#define EDGER 0
+#define MULTIRANGER 1
+
+#define NAV_STATUS MULTIRANGER
+
 #define MAPPING_TASK_NAME "MappingTask"
-#define MAPPING_TASK_STACK_SIZE 2048
+#define MAPPING_TASK_STACK_SIZE 512
 #define MAPPING_TASK_PRI 5
 
 #define FLYING_TASK_NAME "FlyingTask"
-#define FLYING_TASK_STACK_SIZE 2048
+#define FLYING_TASK_STACK_SIZE 512
 #define FLYING_TASK_PRI 5
+
+#define TEST_TASK_NAME "TestTask"
+#define TEST_TASK_STACK_SIZE 512
+#define TEST_TASK_PRI 5
 
 static bool octotree_Flying = false;
 static bool octotree_Print = false;
@@ -45,6 +57,8 @@ static uint8_t sourceId = 0;
 static coordinateF_t path1[PATH_LENGTH];
 static coordinateF_t path2[PATH_LENGTH];
 static coordinateF_t path3[PATH_LENGTH];
+
+static octoMapSerializerResult_t result;
 
 static void mappingTask(void *parameters){
     uavRange_t* uavRange = NULL;
@@ -105,10 +119,31 @@ static void flyingTask(void *parameters){
     
 }
 
+static void testLongPacketSend(void *parameters){
+    // 延迟5s
+    vTaskDelay(M2T(5000));
+    DEBUG_PRINT("testLongPacketSend start\n");
+    // 生成假数据
+    initOctoMapSerializerResult(&result);
+    result.dataLength = 512;
+    for (int i = 0; i < 10; i++)
+    {
+        result.data[i] = i;
+        result.checkCode = result.checkCode ^ i;
+    }
+    int sendCount = 0;
+    while (sendCount < 100)
+    {
+        sendCount++;
+        sendOctoMapData(BROADCAST_LIDAR_ID, (uint8_t*)&result, OCTOMAP_SERIALIZER_RESULT_HEADER_LENGTH + result.dataLength);
+        vTaskDelay(M2T(10000));
+    }
+}   
+
 void appMain()
 {
     // DEBUG_PRINT("appMain start\n");
-    vTaskDelay(M2T(5000));
+    vTaskDelay(M2T(1000));
     sourceId = getSourceId();
     octotree_Flying = true;
     mappingReqPacket.seq = 0;
@@ -117,8 +152,16 @@ void appMain()
     CommunicateInit();
     autoflyControlSystemInit();
     DEBUG_PRINT("init success\n");
-    xTaskCreate(mappingTask, MAPPING_TASK_NAME, MAPPING_TASK_STACK_SIZE, NULL, MAPPING_TASK_PRI, NULL);
+    // xTaskCreate(mappingTask, MAPPING_TASK_NAME, MAPPING_TASK_STACK_SIZE, NULL, MAPPING_TASK_PRI, NULL);
     // xTaskCreate(flyingTask, FLYING_TASK_NAME, FLYING_TASK_STACK_SIZE, NULL, FLYING_TASK_PRI, NULL);
+    if(NAV_STATUS == EDGER){
+        xTaskCreate(testLongPacketSend, TEST_TASK_NAME, TEST_TASK_STACK_SIZE, NULL, TEST_TASK_PRI, NULL);
+    }
+    DEBUG_PRINT("task create success\n");
+    while (true)
+    {
+        vTaskDelay(M2T(1000));
+    }
 }
 
 PARAM_GROUP_START(octotree)

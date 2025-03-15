@@ -13,12 +13,25 @@
 #define OCTOMAP_DATA_RX_TASK_STACK_SIZE 512
 #define OCTOMAP_DATA_RX_TASK_PRI 3
 
-#define MAX_FRAGEMENT_DATA_LENGTH AUTOFLY_PACKET_MTU-sizeof(octoMapFragmentHeader_t)
-#define MAX_SACK_DATA_LENGTH AUTOFLY_PACKET_MTU-sizeof(octoMapPacket_Sack_Header_t)
+#define MAX_FRAGEMENT_DATA_LENGTH (AUTOFLY_PACKET_MTU-sizeof(octoMapFragmentHeader_t))
+#define MAX_SACK_DATA_LENGTH (AUTOFLY_PACKET_MTU-sizeof(octoMapPacket_Sack_Header_t))
 
 #define MAX_PACKET_LENGTH MAX_FRAGEMENT_DATA_LENGTH*255
 
-#define STATE_CHECK_INTERVAL 2 // 状态检测间隔
+#define STATE_CHECK_INTERVAL 5 // 状态检测间隔
+
+#define FRAGMENT_SEND_INTERVAL 20 // 分片发送间隔
+
+#define TX_ACK_WAIT_TIME_INIT 200 // ACK等待次数初值 
+#define MAX_TX_RETRY_TIME 3 // 最大重传次数
+
+#define RX_DATA_UPDATE_WAIT_TIME_INIT 200 // 数据更新等待次数初值
+#define MAX_RX_SACK_SEND_TIME 3 // 最大SACK发送次数
+
+#define MAX_OCTOMAP_SEND_SLEEP_TIME 1000 // 发送休眠时间
+#define MAX_OCTOMAP_SEND_SLEEP_CHECK_INTERVAL 20 // 发送休眠检测间隔
+
+#define MAX_BUFFER_SIZE 4096
 
 typedef enum{
     // 公共状态
@@ -28,7 +41,7 @@ typedef enum{
 
     // 发送状态
     DATA_SENDING, // 数据发送中
-    DATA_SENDED, // 数据发送完成
+    DATA_SENT, // 数据发送完成
     ACK_WAIT, // 等待ACK
     ACK_RECEIVED, // 收到ACK
     SACK_PROCESS, // SACK处理中
@@ -55,34 +68,35 @@ typedef enum{
 typedef struct
 {
     uint8_t dataId; // 数据ID
-    uint8_t fragementId; // 分片ID
-    uint8_t fragementCount; // 分片总数,最大255，255*53/1024 = 13.1KB
-    uint16_t fragementLength; // 分片长度 不足一片也将按一片发送
-}octoMapFragmentHeader_t;
+    uint8_t fragmentId; // 分片ID
+    uint8_t fragmentCount; // 分片总数,最大255，255*53/1024 = 13.1KB
+    uint16_t fragmentLength; // 分片长度 不足一片也将按一片发送
+} __attribute__((packed)) octoMapFragmentHeader_t;
 
 typedef struct 
 {
-    octoMapFragmentHeader_t fragementHeader;
+    octoMapFragmentHeader_t fragmentHeader;
     uint8_t data[MAX_FRAGEMENT_DATA_LENGTH];
-}octoMapFragement_t;
+} __attribute__((packed)) octoMapFragement_t;
 
 typedef struct 
 {
     uint8_t dataId; // 数据ID
     uint8_t length; // 数据长度
     sack_type_t type; // SACK类型,离散或连续
-}octoMapPacket_Sack_Header_t;
+} __attribute__((packed)) octoMapPacket_Sack_Header_t;
 
 typedef struct
 {
     octoMapPacket_Sack_Header_t header;
-    uint8_t missDataId[MAX_SACK_DATA_LENGTH]; // 丢失数据ID
-}octoMapPacket_Sack_t;
+    uint8_t missDataId[MAX_SACK_DATA_LENGTH]; // 丢失数据片ID
+} __attribute__((packed)) octoMapPacket_Sack_t;
 
 typedef struct{
     uint8_t dataId; // 数据ID
 }octoMapPacket_Error_t;
 
-bool sendOctoMapData(uint16_t destAddress, uint8_t *data, uint8_t length);
+
+bool sendOctoMapData(uint16_t destAddress, uint8_t *data, uint16_t length);
 bool processOctoMapData(Autofly_packet_t* packet);
 #endif

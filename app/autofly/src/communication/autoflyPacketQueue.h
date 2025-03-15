@@ -14,7 +14,8 @@
 #define MAX_AUTOFLY_PACKET_QUEUE_SIZE 20
 
 typedef struct{
-    SemaphoreHandle_t mutex;
+    SemaphoreHandle_t mutexWriteWrite;
+    SemaphoreHandle_t mutexWriteRead;
     uint8_t front;
     uint8_t tail;
     uint8_t len;
