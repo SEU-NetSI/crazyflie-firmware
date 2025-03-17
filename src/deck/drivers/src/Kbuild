@@ -28,3 +28,5 @@ obj-$(CONFIG_DECK_ADHOC)         += flooding.o
 obj-$(CONFIG_DECK_ADHOC)         += relative_localization.o
 obj-$(CONFIG_DECK_ADHOC)         += relative_control.o
 obj-$(CONFIG_DECK_ADHOC)         += sniffer.o
+obj-$(CONFIG_DECK_ADHOC)         += uwb_print.o
+obj-$(CONFIG_DECK_ADHOC)         += uwb_recv_print.o

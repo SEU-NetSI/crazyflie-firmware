@@ -8,12 +8,12 @@
 #include "adhocdeck.h"
 #include "usb.h"
 #include "debug.h"
-#include "sniffer.h"
+#include "uwb_print.h"
 
-static TaskHandle_t snifferTaskHandle = 0;
+static TaskHandle_t uwbPrintTaskHandle = 0;
 static QueueHandle_t rxQueue;
 
-void snifferRxCallback(void *parameters) {
+void uwbPrintRxCallback(void *parameters) {
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
   UWB_Packet_t *packet = (UWB_Packet_t *) parameters;
 
@@ -26,7 +26,7 @@ void snifferRxCallback(void *parameters) {
   xQueueSendFromISR(rxQueue, &uwbPacketWithTimestamp, &xHigherPriorityTaskWoken);
 }
 
-static void snifferTask(void *parameters) {
+static void uwbPrintTask(void *parameters) {
   systemWaitStart();
   dwt_forcetrxoff();
   dwt_rxenable(DWT_START_RX_IMMEDIATE);
@@ -62,23 +62,24 @@ static void snifferTask(void *parameters) {
         remain -= sizeToSend;
       }
     }
+    DEBUG_PRINT("rxenable");
     dwt_forcetrxoff();
     dwt_rxenable(DWT_START_RX_IMMEDIATE);
     vTaskDelay(1); // TODO pick proper timespan
   }
 }
 
-void snifferInit() {
+void uwbPrintInit() {
   rxQueue = xQueueCreate(SNIFFER_RX_QUEUE_SIZE, SNIFFER_RX_QUEUE_ITEM_SIZE);
 
   UWB_Message_Listener_t listener;
-  listener.type = SNIFFER;
+  listener.type = PRINT;
   listener.rxQueue = NULL;
-  listener.rxCb = snifferRxCallback;
+  listener.rxCb = uwbPrintRxCallback;
   listener.txCb = NULL;
   uwbRegisterListener(&listener);
 
-  xTaskCreate(snifferTask, "ADHOC_DECK_SNIFFER_TASK_NAME", 4 * configMINIMAL_STACK_SIZE, NULL,
-              ADHOC_DECK_TASK_PRI, &snifferTaskHandle);
+  xTaskCreate(uwbPrintTask, "ADHOC_DECK_SNIFFER_TASK_NAME", 5 * configMINIMAL_STACK_SIZE+100, NULL,
+              ADHOC_DECK_TASK_PRI, &uwbPrintTaskHandle);
 }
 

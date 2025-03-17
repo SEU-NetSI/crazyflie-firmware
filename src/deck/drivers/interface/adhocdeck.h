@@ -10,12 +10,13 @@
 
 /* Function Switch */
 #define ENABLE_PHR_EXT_MODE
-#define ENABLE_RANGING
+// #define ENABLE_RANGING
 //#define ENABLE_FLOODING
 //#define ENABLE_ROUTING
 // #define ENABLE_SNIFFER
+#define ENABLE_UWB_PRINT
 
-#define ENABLE_RX_DBL_BUFF
+// #define ENABLE_RX_DBL_BUFF
 
 #define SPEED_OF_LIGHT 299702547
 #define MAX_TIMESTAMP 1099511627776  // 2**40
@@ -77,6 +78,8 @@ typedef enum {
   FLOODING = 1,
   DATA = 2,
   SNIFFER = 3,
+  UWB_OLSR_MESSAGE = 4,
+  PRINT = 5,  
   MESSAGE_TYPE_COUNT, /* only used for counting message types. */
 } MESSAGE_TYPE;
 
