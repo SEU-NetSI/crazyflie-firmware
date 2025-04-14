@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+#define AUTOFLY_PACKET_QUEUE_SIZE 20
+#define AUTOFLY_PACKET_QUEUE_ITEM_SIZE sizeof(Autofly_packet_t)
+
 #define AUTOFLY_PACKET_HEAD_LENGTH sizeof(Autofly_packet_Header_t)
 #define AUTOFLY_PACKET_MTU (60-AUTOFLY_PACKET_HEAD_LENGTH)
 
@@ -41,6 +44,7 @@ typedef enum{
     OCTOMAP_ERROR_TX_WAITING_TIMEOUT = 0x57, // 超时
     OCTOMAP_ERROR_RX_WAITING_TIMEOUT = 0x58, // 超时
     OCTOMAP_RECEIVE_BUSY = 0x59, // 忙碌 
+    OCTOMAP_FIN_ACK = 0x5A, // FIN_ACK
 }packetType_t;
 
 typedef struct{

@@ -35,6 +35,6 @@ void exploreCommunicationInit();
 uint16_t getExploreRequestSeq();
 
 bool generateExploreReqPacket(explore_req_packet_t* exploreReqPacket);
-bool sendExploreRequest(uint16_t destinationId, explore_req_packet_t* exploreReqPacket);
+bool sendExploreRequest(uint8_t destinationId, explore_req_packet_t* exploreReqPacket);
 void processExploreResp(Autofly_packet_t *autoflyPacket);
 #endif

@@ -23,7 +23,7 @@ uint16_t getExploreRequestSeq()
     return exploreRequestSeq;
 }
 
-bool sendExploreRequest(uint16_t destinationId, explore_req_packet_t* exploreReqPacket)
+bool sendExploreRequest(uint8_t destinationId, explore_req_packet_t* exploreReqPacket)
 {
     return sendAutoFlyPacket(destinationId, EXPLORE_REQ, (uint8_t*)exploreReqPacket, sizeof(explore_req_packet_t));
 }

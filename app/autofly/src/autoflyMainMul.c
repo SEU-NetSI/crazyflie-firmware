@@ -22,7 +22,7 @@
 #define EDGER 0
 #define MULTIRANGER 1
 
-#define NAV_STATUS MULTIRANGER
+#define NAV_STATUS EDGER
 
 #define MAPPING_TASK_NAME "MappingTask"
 #define MAPPING_TASK_STACK_SIZE 512
@@ -40,6 +40,7 @@ static bool octotree_Flying = false;
 static bool octotree_Print = false;
 static bool flag_Terminate = false;
 static bool hasLanded = false;
+
 // static bool data_lock = false;
 uint16_t seqnumber = 0;  //SGL
 
@@ -121,22 +122,27 @@ static void flyingTask(void *parameters){
 
 static void testLongPacketSend(void *parameters){
     // 延迟5s
-    vTaskDelay(M2T(5000));
+    vTaskDelay(M2T(3000));
     DEBUG_PRINT("testLongPacketSend start\n");
     // 生成假数据
     initOctoMapSerializerResult(&result);
-    result.dataLength = 512;
-    for (int i = 0; i < 10; i++)
+    result.dataLength = 2048;
+    for (int i = 0; i < result.dataLength; i++)
     {
-        result.data[i] = i;
-        result.checkCode = result.checkCode ^ i;
+        result.data[i] = rand() % 256;
+        result.checkCode = result.checkCode ^ result.data[i];
     }
     int sendCount = 0;
+    uint8_t destionationAdr = 0x13;
     while (sendCount < 100)
     {
-        sendCount++;
-        sendOctoMapData(BROADCAST_LIDAR_ID, (uint8_t*)&result, OCTOMAP_SERIALIZER_RESULT_HEADER_LENGTH + result.dataLength);
-        vTaskDelay(M2T(10000));
+        if(getTestSendEnableNext()){
+            sendCount++;
+            sendOctoMapData(destionationAdr, (uint8_t*)&result, OCTOMAP_SERIALIZER_RESULT_HEADER_LENGTH + result.dataLength);
+            setTestSendEnableNext(false);
+            DEBUG_PRINT("sendCount: %d, dataLength: %d\n", sendCount, result.dataLength);
+        }
+        vTaskDelay(M2T(10));
     }
 }   
 

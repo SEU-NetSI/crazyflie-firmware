@@ -19,7 +19,7 @@ void initAutoflyPacketQueue(Autofly_packet_Queue_t *queue){
     if(queue->mutexWriteWrite == NULL || queue->mutexWriteRead == NULL){
         DEBUG_PRINT("[initAutoflyPacketQueue]Create mutex failed\n");
     }
-    for(int i = 0; i < MAX_AUTOFLY_PACKET_QUEUE_SIZE; i++){
+    for(int i = 0; i < AUTOFLY_PACKET_QUEUE_SIZE; i++){
         queue->data[i].header.sourceId = 0;
         queue->data[i].header.destinationId = 0;
         queue->data[i].header.packetType = 0;
@@ -41,7 +41,7 @@ void pushAutoflyPacketQueue(Autofly_packet_Queue_t *queue, Autofly_packet_t* dat
     xSemaphoreTake(queue->mutexWriteRead, portMAX_DELAY);
     // DEBUG_PRINT("[pushAutoflyPacketQueue]Get WriteReadLock\n");
     memcpy(&queue->data[queue->tail], data, sizeof(Autofly_packet_t));
-    queue->tail = (queue->tail + 1) % MAX_AUTOFLY_PACKET_QUEUE_SIZE;
+    queue->tail = (queue->tail + 1) % AUTOFLY_PACKET_QUEUE_SIZE;
     queue->len++;
     // DEBUG_PRINT("[pushAutoflyPacketQueue]len = %d\n", queue->len);
     // 释放信号量
@@ -55,7 +55,7 @@ bool popAutoflyPacketQueue(Autofly_packet_Queue_t *queue, Autofly_packet_t* data
     }
     xSemaphoreTake(queue->mutexWriteRead, portMAX_DELAY);
     memcpy(data, &queue->data[queue->front], sizeof(Autofly_packet_t));
-    queue->front = (queue->front + 1) % MAX_AUTOFLY_PACKET_QUEUE_SIZE;
+    queue->front = (queue->front + 1) % AUTOFLY_PACKET_QUEUE_SIZE;
     queue->len--;
     // DEBUG_PRINT("[popAutoflyPacketQueue]len = %d\n", queue->len);
     xSemaphoreGive(queue->mutexWriteRead);
@@ -66,5 +66,5 @@ bool isAutoflyPacketQueueEmpty(Autofly_packet_Queue_t *queue){
     return queue->len == 0;
 }
 bool isAutoflyPacketQueueFull(Autofly_packet_Queue_t *queue){
-    return queue->len == MAX_AUTOFLY_PACKET_QUEUE_SIZE;
+    return queue->len == AUTOFLY_PACKET_QUEUE_SIZE;
 }

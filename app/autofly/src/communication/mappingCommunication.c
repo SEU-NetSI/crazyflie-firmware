@@ -48,7 +48,7 @@ bool generateMappingReqPacket(mapping_req_packet_t* mappingReqPacket){
     return true;
 }
 
-bool sendMappingRequest(uint16_t destinationId, mapping_req_packet_t* mapping_req_packet)
+bool sendMappingRequest(uint8_t destinationId, mapping_req_packet_t* mapping_req_packet)
 {
     return sendAutoFlyPacket(destinationId, MAPPING_REQ, (uint8_t*)mapping_req_packet, sizeof(mapping_req_packet_t));
 }
