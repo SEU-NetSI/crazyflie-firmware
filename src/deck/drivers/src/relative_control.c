@@ -390,7 +390,7 @@ void relativeControlTask(void *arg)
 
     if (RUNNING_STAGE == 1) // debug阶段就不能让无人机飞
     {
-      if (is_connect && keepFlying && !isCompleteTaskAndLand)
+      if (keepFlying && !isCompleteTaskAndLand)
       {
         // take off
         if (onGround) // 起飞
