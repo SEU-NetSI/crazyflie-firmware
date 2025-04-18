@@ -20,7 +20,7 @@
 
 static uint16_t MY_UWB_ADDRESS;
 int16_t TX_jitter = 0;
-uint16_t TX_PERIOD_IN_MS = 100;
+uint16_t TX_PERIOD_IN_MS = 60;
 /*用于计算丢包率*/
 float PACKET_LOSS_RATE[RANGING_TABLE_SIZE + 1] = {0};
 uint32_t RECEIVE_COUNT[RANGING_TABLE_SIZE + 1] = {0};
@@ -704,8 +704,8 @@ int generateRangingMessage(Ranging_Message_t *rangingMessage)
     // 分阶段控制
     tickInterval = xTaskGetTickCount() - leaderStateInfo.keepFlyingTrueTick;
     // 所有邻居起飞判断
-    uint32_t convergeTick = 10000; // 收敛时间10s
-    uint32_t followTick = 10000;   // 跟随时间10s
+    uint32_t convergeTick = 2000; // 收敛时间10s
+    uint32_t followTick = 2000;   // 跟随时间10s
     uint32_t converAndFollowTick = convergeTick + followTick;
     uint32_t maintainTick = 5000;                                            // 每转一次需要的时间
     uint32_t rotationNums_3Stage = 8;                                        // 第3阶段旋转次数

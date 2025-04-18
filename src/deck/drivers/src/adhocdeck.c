@@ -60,7 +60,7 @@ static uint16_t MY_UWB_ADDRESS;
 static bool isInit = false;
 static TaskHandle_t uwbTaskHandle = 0;
 static TaskHandle_t uwbTxTaskHandle = 0;
-static SemaphoreHandle_t irqSemaphore;
+SemaphoreHandle_t irqSemaphore;
 
 static QueueHandle_t txQueue;
 static xQueueHandle queues[MESSAGE_TYPE_COUNT];

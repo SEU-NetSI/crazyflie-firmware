@@ -13,8 +13,9 @@
 #include "log.h"
 #include "math.h"
 #include "adhocdeck.h"
+#include "semphr.h"
 #define RUNNING_STAGE 1 // 0代码debug阶段，1代码运行阶段
-
+extern SemaphoreHandle_t irqSemaphore;
 static uint16_t MY_UWB_ADDRESS;
 static bool isInit;
 static bool onGround = true;               // 无人机当前是否在地面上?
@@ -175,9 +176,10 @@ static void formation0asCenter(float_t tarX, float_t tarY, float_t height)
 
   setHoverSetpoint(&setpoint, pid_vx, pid_vy, height, 0);
 }
-
 void take_off(float_t height)
 {
+  xSemaphoreTake(irqSemaphore, portMAX_DELAY);
+  
   for (int i = 0; i < 20; i++)
   {
     setHoverSetpoint_takeoff(&setpoint, 0, 0, (height * i) / 20, 0);
@@ -193,6 +195,7 @@ void take_off(float_t height)
   //   setHoverSetpoint(&setpoint, 0, 0, height, 0);
   //   vTaskDelay(M2T(100));
   // }
+  xSemaphoreGive(irqSemaphore);
   onGround = false;
 }
 
