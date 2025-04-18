@@ -70,5 +70,5 @@ void estimatorKalmanGetEstimatedPos(point_t* pos);
  */
 void estimatorKalmanGetEstimatedRot(float * rotationMatrix);
 /*自己添加*/
-void estimatorKalmanGetSwarmInfo(short *vx, short *vy, float *gyroZ, uint16_t *height);
+void estimatorKalmanGetSwarmInfo(float *vx, float *vy, float *gyroZ, uint16_t *height);
 /*自己添加*/

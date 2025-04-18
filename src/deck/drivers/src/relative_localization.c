@@ -19,6 +19,7 @@
 
 static uint16_t MY_UWB_ADDRESS;
 static bool isInit;
+#define UPDATE_LOCATION_TICK 50
 
 static float Qv = 0.2f;         // velocity deviation,初始值为1.0    -0.25
 static float Qr = 0.1f;         // yaw rate deviation
@@ -27,6 +28,8 @@ static float InitCovPos = 0.2f; // 初始位置误差
 static float InitCovYaw = 0.2f; // 初始偏航角误差
 
 static relaVariable_t relaVar[RANGING_TABLE_SIZE];
+
+static Realtime_Relative_Location_t realtimeRelativeLocation[RANGING_TABLE_SIZE];
 
 static float A[STATE_DIM_rl][STATE_DIM_rl];
 static float h[STATE_DIM_rl] = {0};
@@ -47,11 +50,8 @@ static arm_matrix_instance_f32 HTm = {STATE_DIM_rl, 1, HTd};
 static float PHTd[STATE_DIM_rl * 1];
 static arm_matrix_instance_f32 PHTm = {STATE_DIM_rl, 1, PHTd};
 
-static bool fullConnect = false;  // a flag for control (fly or not)
-static uint32_t connectCount = 0; // watchdog for detecting the connection
-
-static short vxj_t, vyj_t;
-static short vxi_t, vyi_t;
+static float vxj_t, vyj_t;
+static float vxi_t, vyi_t;
 static uint16_t hi_t, hj_t; // height of robot i and j
 
 static float vxj, vyj, rj; // receive vx, vy, gz and distance
@@ -59,7 +59,6 @@ static float vxi, vyi, ri; // self vx, vy, gz
 static uint16_t dij;       // distance between self i and other j
 static float hi, hj;       // height of robot i and j
 
-static currentNeighborAddressInfo_t currentNeighborAddressInfo;
 // static int16_t initRelativePosition[RANGING_TABLE_SIZE][RANGING_TABLE_SIZE][STATE_DIM_rl - 1];/*用于在指定无人机的初始位置时使用,由于在同一水平面，为了节省内存就不用Z轴了*/
 
 // 初始时，所有无人机基于0号无人机的相对位置
@@ -128,18 +127,70 @@ static inline float arm_sqrt(float32_t in)
     return pOut;
 }
 
+static void updateLocationTimerCallback(TimerHandle_t timer)
+{
+    // 遍历rangingTable中所有的成员进行位置更新
+    CurrentNeighborAddressInfo_t *currentNeighborAddressInfo = getGlobalCurrentNeighborAddressInfo();
+    xSemaphoreTake(currentNeighborAddressInfo->mu, portMAX_DELAY);
+    for (int i = 0; i < currentNeighborAddressInfo->size; i++)
+    {
+
+        UWB_Address_t neighborAddress = currentNeighborAddressInfo->address[i];
+        ASSERT(neighborAddress < RANGING_TABLE_SIZE_MAX);
+        uint32_t dt = (float)(xTaskGetTickCount() - realtimeRelativeLocation[neighborAddress].oldTimetick) / configTICK_RATE_HZ;
+        // 获取自己的
+        estimatorKalmanGetSwarmInfo(&vxi, &vyi, &ri, &hi);
+        updateRealtimeLocationImuInfo(neighborAddress, vxi, vyi, ri, hi, xTaskGetTickCount());
+        vxi = vxi / 100;
+        vyi = vyi / 100;
+        // DEBUG_PRINT("locVx:%f\n", vxi);
+        // 获取邻居的
+        getLatestNeighborStateInfo(neighborAddress, &vxj, &vyj, &rj);
+        vxj /= 100;
+        vyj /= 100;
+        // 更新
+        relativeLocationPredict(neighborAddress, vxi, vyi, ri, vxj, vyj, rj, dt);
+    }
+    xSemaphoreGive(currentNeighborAddressInfo->mu);
+}
+
+static void initUpdateLocationTimer()
+{
+    static TimerHandle_t updateLocationTimer;
+    DEBUG_PRINT("init updateLocationTimer\n");
+    updateLocationTimer = xTimerCreate("imu_state_timer",
+                                       M2T(UPDATE_LOCATION_TICK),
+                                       pdTRUE,
+                                       (void *)0,
+                                       updateLocationTimerCallback);
+    if (updateLocationTimer != NULL)
+    {
+        xTimerStart(updateLocationTimer, M2T(0));
+        DEBUG_PRINT("succ timer");
+    }
+    else
+    {
+        DEBUG_PRINT("fail timer");
+    }
+}
+
 void relativeLocoInit(void)
 {
     if (isInit)
     {
         return;
     }
+    while (isRangingInitComplete() == false)
+    {
+        vTaskDelay(100);
+    }
     MY_UWB_ADDRESS = uwbGetAddress();
-    xTaskCreate(relativeLocoTask, "relative_Localization", ZRANGER_TASK_STACKSIZE, NULL, ZRANGER_TASK_PRI, NULL);
+    initUpdateLocationTimer();
+    xTaskCreate(relativeLocoTask, "relative_Localization", ZRANGER_TASK_STACKSIZE + 150, NULL, ZRANGER_TASK_PRI, NULL);
     isInit = true;
 }
 
-void relaVarInit(relaVariable_t *relaVar, uint16_t neighborAddress)
+void initRelaVar(relaVariable_t *relaVar, uint16_t neighborAddress)
 {
     ASSERT(neighborAddress <= RANGING_TABLE_SIZE);
     for (int i = 0; i < STATE_DIM_rl; i++)
@@ -164,48 +215,41 @@ void relaVarInit(relaVariable_t *relaVar, uint16_t neighborAddress)
     relaVar[neighborAddress].S[STATE_rlYaw] = 0;
     /*----------*/
     relaVar[neighborAddress].oldTimetick = xTaskGetTickCount();
+    relaVar[neighborAddress].oldMsgSequence = 0;
 
-    fullConnect = true;
     // DEBUG_PRINT("%f\n", relaVar[neighborAddress].S[STATE_rlX]);
 }
 
 void relativeLocoTask(void *arg)
 {
-    /* 这块用于在指定无人机的初始位置时使用
-    initRelativePosition[0][1][STATE_rlX] = 1; // 0号无人机相对于1号无人机的相对位置
-    initRelativePosition[0][1][STATE_rlY] = -1;
-    initRelativePosition[1][0][STATE_rlX] = -1; // 1号无人机相对于0号无人机的相对位置
-    initRelativePosition[1][0][STATE_rlY] = 1;
-    */
     systemWaitStart();
     while (1)
     {
-        vTaskDelay(10);
-
-        getCurrentNeighborAddressInfo_t(&currentNeighborAddressInfo); // TODO
-    
-        for (int index = 0; index < currentNeighborAddressInfo.size; index++)
+        vTaskDelay(1);
+        UWB_Address_t neighborAddress;
+        if (xQueueReceive(queueDistUpdatedAddress, &neighborAddress, portMAX_DELAY))
         {
-            //DEBUG_PRINT("%d\n",index);
-            connectCount = 0;
-            address_t neighborAddress = currentNeighborAddressInfo.address[index];
-        
-
+            // DEBUG_PRINT("location address:%d\n", neighborAddress);
             bool isNewAdd; // 邻居是否是新加入的
 
-            if (getNeighborStateInfo(neighborAddress, &dij, &vxj_t, &vyj_t, &rj, &hj_t, &isNewAdd))
+            if (getNeighborStateInfo(neighborAddress, &relaVar[neighborAddress].oldMsgSequence, &dij, &vxj_t, &vyj_t, &rj, &hj_t, &isNewAdd))
             {
-                //DEBUG_PRINT("start%d\n", xTaskGetTickCount());
+                // DEBUG_PRINT("location seq:%d\n", relaVar[neighborAddress].oldMsgSequence);
                 vxj = (vxj_t + 0.0) / 100;
                 vyj = (vyj_t + 0.0) / 100;
                 hj = (hj_t + 0.0) / 100;
                 if (isNewAdd)
                 {
-                    relaVarInit(relaVar, neighborAddress);
+                    initRelaVar(relaVar, neighborAddress);
+                    // 相对定位初始化完成，更新最新位置
+                    updateRealtimeLocationFromRelaVar(neighborAddress);
+                    initRealtimeLocation(realtimeRelativeLocation, neighborAddress);
                 }
                 else
                 {
-                    estimatorKalmanGetSwarmInfo(&vxi_t, &vyi_t, &ri, &hi_t); // 当前无人机的信息
+                    getCurrImuInfo(neighborAddress, &vxi_t, &vyi_t, &ri, &hi_t); // 当前无人机的信息
+                    // DEBUG_PRINT("vxi:%f\n",vxi_t);
+                    // DEBUG_PRINT("vyi:%f\n",vyi_t);
                     vxi = (vxi_t + 0.0) / 100;
                     vyi = (vyi_t + 0.0) / 100;
                     hi = (hi_t + 0.0) / 100;
@@ -213,23 +257,33 @@ void relativeLocoTask(void *arg)
                     float dtEKF = (float)(osTick - relaVar[neighborAddress].oldTimetick) / configTICK_RATE_HZ;
                     relaVar[neighborAddress].oldTimetick = osTick;
                     relaVar[neighborAddress].height = hj;
+                    // 又要开始新的一轮统计了
+                    initRealtimeLocation(realtimeRelativeLocation, neighborAddress);
                     relativeEKF(neighborAddress, vxi, vyi, ri, hi, vxj, vyj, rj, hj, dij, dtEKF);
+                    // 相对定位完成，更新校正后的位置
+                    updateRealtimeLocationFromRelaVar(neighborAddress);
                 }
-                //DEBUG_PRINT("addr:%d,X:%f,Y:%f\n",neighborAddress,relaVar[neighborAddress].S[STATE_rlX],relaVar[neighborAddress].S[STATE_rlY]);
+                // DEBUG_PRINT("addr:%d,X:%f,Y:%f\n",neighborAddress,relaVar[neighborAddress].S[STATE_rlX],relaVar[neighborAddress].S[STATE_rlY]);
             }
         }
-        // connectCount++;
-        // // DEBUG_PRINT("%d\n", connectCount);
-        // if (connectCount < 1000) // // 这里我设定的是60s没有测距，fullConnect=false
-        // {
-        //     fullConnect = true; // disable control if there is no ranging after 1 second
-        // }
-        // else
-        // {
-        //     // DEBUG_PRINT("------------");
-        //     fullConnect = false;
-        // }
     }
+}
+
+void relativeLocationPredict(int n, float vxi, float vyi, float ri, float vxj, float vyj, float rj, float dt)
+{
+    // some preprocessing
+    arm_matrix_instance_f32 Pm = {STATE_DIM_rl, STATE_DIM_rl, (float *)relaVar[n].P};
+    float cyaw = arm_cos_f32(realtimeRelativeLocation[n].S[STATE_rlYaw]);
+    float syaw = arm_sin_f32(realtimeRelativeLocation[n].S[STATE_rlYaw]);
+    float xij = realtimeRelativeLocation[n].S[STATE_rlX];
+    float yij = realtimeRelativeLocation[n].S[STATE_rlY];
+
+    // prediction
+    realtimeRelativeLocation[n].S[STATE_rlX] = xij + (cyaw * vxj - syaw * vyj - vxi + ri * yij) * dt;
+    realtimeRelativeLocation[n].S[STATE_rlY] = yij + (syaw * vxj + cyaw * vyj - vyi - ri * xij) * dt;
+    realtimeRelativeLocation[n].S[STATE_rlYaw] = realtimeRelativeLocation[n].S[STATE_rlYaw] + (rj - ri) * dt;
+
+    DEBUG_PRINT("X:%d,Y:%d\n",realtimeRelativeLocation[n].S[STATE_rlX],realtimeRelativeLocation[n].S[STATE_rlY]);
 }
 
 void relativeEKF(int n, float vxi, float vyi, float ri, float hi, float vxj, float vyj, float rj, float hj, uint16_t dij, float dt)
@@ -309,27 +363,55 @@ void relativeEKF(int n, float vxi, float vyi, float ri, float hi, float vxj, flo
     // DEBUG_PRINT("dis:%d\n", dij);
 }
 
-bool relativeInfoRead(float *relaVarParam, float *neighbor_height, currentNeighborAddressInfo_t *dest)
+void updateRealtimeLocationFromRelaVar(UWB_Address_t neighborAddress)
 {
-    if (fullConnect)
+    realtimeRelativeLocation[neighborAddress].S[STATE_rlX] = relaVar[neighborAddress].S[STATE_rlX];
+    realtimeRelativeLocation[neighborAddress].S[STATE_rlY] = relaVar[neighborAddress].S[STATE_rlY];
+    realtimeRelativeLocation[neighborAddress].S[STATE_rlYaw] = relaVar[neighborAddress].S[STATE_rlYaw];
+    realtimeRelativeLocation[neighborAddress].oldTimetick = relaVar[neighborAddress].oldTimetick;
+    DEBUG_PRINT("update-X:%d,Y:%d\n",realtimeRelativeLocation[neighborAddress].S[STATE_rlX],realtimeRelativeLocation[neighborAddress].S[STATE_rlY]);
+}
+
+void updateRealtimeLocationImuInfo(UWB_Address_t neighborAddress, float velocityXInWorld, float velocityYInWorld, float gyroZ, float posiZ, uint32_t updatedTick)
+{
+    // 和当前的进行更新
+    uint32_t holdTick = realtimeRelativeLocation[neighborAddress].imuState.allTickCount;
+    uint32_t diffTickCount = updatedTick - realtimeRelativeLocation[neighborAddress].imuState.lastUpdateTick;
+    uint32_t allTickCount = diffTickCount + holdTick;
+    ASSERT(allTickCount > 0);
+    realtimeRelativeLocation[neighborAddress].imuState.velocityXInWorld = ((holdTick * realtimeRelativeLocation[neighborAddress].imuState.velocityXInWorld) + (diffTickCount * velocityXInWorld)) / (allTickCount);
+    realtimeRelativeLocation[neighborAddress].imuState.velocityYInWorld = ((holdTick * realtimeRelativeLocation[neighborAddress].imuState.velocityYInWorld) + (diffTickCount * velocityYInWorld)) / (allTickCount);
+    realtimeRelativeLocation[neighborAddress].imuState.gyroZ = ((holdTick * realtimeRelativeLocation[neighborAddress].imuState.gyroZ) + (diffTickCount * gyroZ)) / (allTickCount);
+    realtimeRelativeLocation[neighborAddress].imuState.posiZ = posiZ;
+
+    // 更新最新的均值的时间
+    realtimeRelativeLocation[neighborAddress].imuState.lastUpdateTick = updatedTick;
+    // 更新当前均值持续的时间
+    realtimeRelativeLocation[neighborAddress].imuState.allTickCount = allTickCount;
+}
+
+void initRealtimeLocation(Realtime_Relative_Location_t *realtimeRelativeLocation, UWB_Address_t neighborAddress)
+{
+    realtimeRelativeLocation[neighborAddress].imuState.allTickCount = 0;
+    realtimeRelativeLocation[neighborAddress].imuState.lastUpdateTick = 0;
+}
+
+void initRealtimeLocationList(Realtime_Relative_Location_t *realtimeRelativeLocation)
+{
+    for (int i = 0; i < RANGING_TABLE_SIZE; i++)
     {
-        for (int index = 0; index < currentNeighborAddressInfo.size; index++)
-        {
-            address_t neighborAddress = currentNeighborAddressInfo.address[index];
-            *(relaVarParam + neighborAddress * STATE_DIM_rl + 0) = relaVar[neighborAddress].S[STATE_rlX];
-            *(relaVarParam + neighborAddress * STATE_DIM_rl + 1) = relaVar[neighborAddress].S[STATE_rlY];
-            *(relaVarParam + neighborAddress * STATE_DIM_rl + 2) = relaVar[neighborAddress].S[STATE_rlYaw];
-            *(neighbor_height + neighborAddress) = relaVar[neighborAddress].height;
-        }
-        memcpy(dest->address, currentNeighborAddressInfo.address, sizeof(currentNeighborAddressInfo.address));
-        dest->size = currentNeighborAddressInfo.size;
-        return true;
-    }
-    else
-    {
-        return false;
+        initRealtimeLocation(initRealtimeLocation, i);
     }
 }
+
+void getCurrImuInfo(UWB_Address_t neighborAddress, float *vxi, float *vyi, float *ri, float *hi)
+{
+    *vxi = realtimeRelativeLocation[neighborAddress].imuState.velocityXInWorld;
+    *vyi = realtimeRelativeLocation[neighborAddress].imuState.velocityYInWorld;
+    *ri = realtimeRelativeLocation[neighborAddress].imuState.gyroZ;
+    *hi = realtimeRelativeLocation[neighborAddress].imuState.posiZ;
+}
+
 void copyTargetList(float_t *dest, float_t *src)
 {
     for (int i = 0; i < ARRAY_LENGTH; i++)
@@ -338,6 +420,11 @@ void copyTargetList(float_t *dest, float_t *src)
         *(dest + i * STATE_DIM_rl + 1) = *(src + i * STATE_DIM_rl + 1);
         *(dest + i * STATE_DIM_rl + 2) = *(src + i * STATE_DIM_rl + 2);
     }
+}
+
+Realtime_Relative_Location_t *getGlobalRealtimeLocation()
+{
+    return realtimeRelativeLocation;
 }
 
 // LOG_GROUP_START(relative_pos)

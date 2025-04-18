@@ -200,6 +200,7 @@ static void raftLogAppend(Raft_Log_t *raftLog, uint16_t logTerm, Raft_Log_Comman
   if ((raftLog->items[index].command.type == RAFT_LOG_COMMAND_CONFIG_ADD
       || raftLog->items[index].command.type == RAFT_LOG_COMMAND_CONFIG_REMOVE)
       && *(uint16_t *) &raftLog->items[index].command.payload == raftNode.me) {
+        // 这个判断条件是什么？为何要直接应用该日志
     raftLogApply(raftLog, index);
   }
 }
@@ -415,6 +416,7 @@ static void raftCommandBufferConsumeTask() {
     if (xQueuePeek(commandBufferQueue, &item, portMAX_DELAY)) {
       if (item.readIndex <= raftNode.lastApplied) {
         xQueueReceive(commandBufferQueue, &item, M2T(0));
+        // 这个在做什么？
         raftSendCommandReply(item.clientId, raftNode.latestAppliedRequestId[item.clientId], raftNode.currentLeader, true);
       } else {
         vTaskDelay(M2T(RAFT_HEARTBEAT_INTERVAL / 5));
@@ -527,6 +529,7 @@ void raftProcessRequestVote(UWB_Address_t peerAddress, Raft_Request_Vote_Args_t 
                 args->term,
                 raftNode.currentTerm
     );
+    // TODO:难道不应该设置投票吗？
     raftNode.currentTerm = args->term;
     convertToFollower(&raftNode);
     raftSendRequestVoteReply(args->candidateId, raftNode.currentTerm, true);
@@ -547,6 +550,9 @@ void raftProcessRequestVote(UWB_Address_t peerAddress, Raft_Request_Vote_Args_t 
     raftSendRequestVoteReply(args->candidateId, raftNode.currentTerm, false);
     return;
   }
+  // TODO:是不是只要raftNode.voteFor != RAFT_VOTE_FOR_NO_ONE 就应该直接返回，防止重复投票？
+  // TODO:那应该是没收到投票请求，才会再来请求，而至于重复投票问题由leader决定
+  // TODO:投票的幂等性，是由leader来决定的
   raftNode.voteFor = args->candidateId;
   raftNode.lastHeartbeatTime = xTaskGetTickCount();
   DEBUG_PRINT("raftProcessRequestVote: %u grant vote to %u.\n", raftNode.me, args->candidateId);
@@ -581,6 +587,7 @@ void raftProcessRequestVoteReply(UWB_Address_t peerAddress, Raft_Request_Vote_Re
     DEBUG_PRINT("raftProcessRequestVoteReply: Peer %u not in current config, ignore.\n", peerAddress);
     return;
   }
+  // 这种应该就是过期的请求，因为如果是正常请求，其他投票者一定大于等于自己的任期，因为如果投票者任期小，那么一定已经更新为当前的
   if (reply->term < raftNode.currentTerm) {
     DEBUG_PRINT("raftProcessRequestVoteReply: Peer term = %u < my term = %u, ignore.\n",
                 reply->term,
@@ -596,6 +603,7 @@ void raftProcessRequestVoteReply(UWB_Address_t peerAddress, Raft_Request_Vote_Re
     raftNode.currentTerm = reply->term;
     convertToFollower(&raftNode);
   }
+  // 这里就是要么投票了，要么没有投票
   if (reply->voteGranted && raftNode.currentState == RAFT_STATE_CANDIDATE) {
     raftNode.peerVote[peerAddress] = true;
     uint8_t voteCount = 0;
@@ -686,7 +694,7 @@ void raftProcessAppendEntries(UWB_Address_t peerAddress, Raft_Append_Entries_Arg
     DEBUG_PRINT("raftProcessAppendEntries: Peer term = %u < my term = %u, ignore.\n",
                 args->term,
                 raftNode.currentTerm);
-    raftSendAppendEntriesReply(peerAddress, raftNode.currentTerm, false, 0);
+    raftSendAppendEntriesReply(peerAddress, raftNode.currentTerm, false, 0);  // 我比你数据更多，你别给我发了
     return;
   }
   /* If RPC request or response contains term T > currentTerm, set currentTerm = T, convert to follower. */
@@ -696,7 +704,7 @@ void raftProcessAppendEntries(UWB_Address_t peerAddress, Raft_Append_Entries_Arg
                 raftNode.currentTerm
     );
     raftNode.currentTerm = args->term;
-    convertToFollower(&raftNode);
+    convertToFollower(&raftNode); // 转到follower并更新当前任期
   }
   /* Candidate: If AppendEntries RPC received from new leader, convert to follower. */
   if (raftNode.currentState == RAFT_STATE_CANDIDATE) {
@@ -741,6 +749,7 @@ void raftProcessAppendEntries(UWB_Address_t peerAddress, Raft_Append_Entries_Arg
                 args->leaderCommit,
                 raftNode.commitIndex);
     raftNode.commitIndex = MIN(args->leaderCommit, raftNode.log.items[raftNode.log.size - 1].index);
+    // 从leader的commitIndex来更新更新commitIndex
   }
   raftApplyLog();
   raftSendAppendEntriesReply(peerAddress, raftNode.currentTerm, true, raftNode.log.items[raftNode.log.size - 1].index + 1);
@@ -829,6 +838,7 @@ void raftProcessAppendEntriesReply(UWB_Address_t peerAddress, Raft_Append_Entrie
             raftNode.matchIndex[peerAddress] = raftNode.nextIndex[peerAddress] - 1;
           }
         } else {
+          // TODO:这是什么情况
           raftNode.nextIndex[peerAddress] = raftNode.log.items[itemIndex].index;
           DEBUG_PRINT("raftProcessAppendEntriesReply: Try to adjust next index to %u.\n", raftNode.nextIndex[peerAddress]);
         }
@@ -838,6 +848,7 @@ void raftProcessAppendEntriesReply(UWB_Address_t peerAddress, Raft_Append_Entrie
 }
 
 void raftSendCommand(Raft_Command_Args_t *args) {
+  // 一次只发送一条命令
   UWB_Data_Packet_t dataTxPacket;
   dataTxPacket.header.type = UWB_DATA_MESSAGE_RAFT;
   dataTxPacket.header.srcAddress = raftNode.me;
@@ -865,6 +876,7 @@ void raftProcessCommand(UWB_Address_t clientId, Raft_Command_Args_t *args) {
     return;
   }
   if (args->command.requestId <= raftNode.latestAppliedRequestId[clientId]) {
+    // 通过全局requestId进行幂等性保证
     DEBUG_PRINT("raftProcessCommand: %u received duplicated command from client %u, requestId = %u.\n",
                 raftNode.me,
                 clientId,
@@ -872,6 +884,8 @@ void raftProcessCommand(UWB_Address_t clientId, Raft_Command_Args_t *args) {
     raftSendCommandReply(clientId, raftNode.latestAppliedRequestId[clientId], raftNode.me, true);
     return;
   }
+  // 走到这里，当前是leader
+  // 合并C_OLD和C_NEW执行一遍成员变更，只有log提交才会变更成功
   if ((args->command.type == RAFT_LOG_COMMAND_CONFIG_ADD && raftConfigAdd(*(uint16_t *) &args->command.payload)) ||
       (args->command.type == RAFT_LOG_COMMAND_CONFIG_REMOVE && raftConfigRemove(*(uint16_t *) &args->command.payload))) {
     /* Now use the combination of C_OLD and C_NEW to perform one-step membership change, when the change log is committed,
@@ -885,10 +899,12 @@ void raftProcessCommand(UWB_Address_t clientId, Raft_Command_Args_t *args) {
         .clientId = raftNode.me,
         // TODO: init empty payload
     };
+    // 这里为何一个空的心跳包？ 心跳包发完不需要return吗？
     raftLogAppend(&raftNode.log, raftNode.currentTerm, &noOpsLog);
   }
   /* Append new log entry and then buffer this command with readIndex = index of the new log entry. */
   raftLogAppend(&raftNode.log, raftNode.currentTerm, &args->command);
+  // 为何要buffer命令
   bufferRaftCommand(raftNode.log.items[raftNode.log.size - 1].index, &args->command);
 }
 

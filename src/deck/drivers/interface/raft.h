@@ -156,14 +156,17 @@ void raftSendRequestVote(UWB_Address_t peerAddress);
 void raftProcessRequestVote(UWB_Address_t peerAddress, Raft_Request_Vote_Args_t *args);
 void raftSendRequestVoteReply(UWB_Address_t peerAddress, uint16_t term, bool voteGranted);
 void raftProcessRequestVoteReply(UWB_Address_t peerAddress, Raft_Request_Vote_Reply_t *reply);
+
 void raftSendAppendEntries(UWB_Address_t peerAddress);
 void raftProcessAppendEntries(UWB_Address_t peerAddress, Raft_Append_Entries_Args_t *args);
 void raftSendAppendEntriesReply(UWB_Address_t peerAddress, uint16_t term, bool success, uint16_t nextIndex);
 void raftProcessAppendEntriesReply(UWB_Address_t peerAddress, Raft_Append_Entries_Reply_t *reply);
+
 void raftSendCommand(Raft_Command_Args_t *args);
 void raftProcessCommand(UWB_Address_t clientId, Raft_Command_Args_t *args);
 void raftSendCommandReply(UWB_Address_t clientId, uint16_t latestApplied, UWB_Address_t leaderAddress, bool success);
 void raftProcessCommandReply(UWB_Address_t peerAddress, Raft_Command_Reply_t *reply);
+
 void printRaftConfig(Raft_Config_t config);
 void printRaftLog(Raft_Log_t *raftLog);
 void printRaftLogItem(Raft_Log_Item_t *item);

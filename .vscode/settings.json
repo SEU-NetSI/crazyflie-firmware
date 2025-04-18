@@ -74,7 +74,11 @@
     "condition_variable": "c",
     "typeinfo": "c",
     "estimator_kalman.h": "c",
-    "cstdint": "cpp"
+    "cstdint": "cpp",
+    "imu_state.h": "c",
+    "freertosconfig.h": "c",
+    "sentinel.h": "c",
+    "usb.h": "c"
   },
   "C_Cpp_Runner.cCompilerPath": "clang",
   "C_Cpp_Runner.cppCompilerPath": "clang++",
@@ -110,5 +114,6 @@
     "**/.vscode",
     "**/.vscode/**"
   ],
-  "C_Cpp_Runner.useAddressSanitizer": false
+  "C_Cpp_Runner.useAddressSanitizer": false,
+  "C_Cpp.clang_format_path": "/usr/bin/clang-format"
 }

@@ -395,10 +395,10 @@ void estimatorKalmanGetEstimatedRot(float * rotationMatrix) {
   memcpy(rotationMatrix, coreData.R, 9*sizeof(float));
 }
 
-void estimatorKalmanGetSwarmInfo(short *vx, short *vy, float *gyroZ, uint16_t *height)
+void estimatorKalmanGetSwarmInfo(float *vx, float *vy, float *gyroZ, uint16_t *height)
 {
-  *vx = (short)(swarmVelocityXInWorld * 100);
-  *vy = (short)(swarmVelocityYInWorld * 100);
+  *vx = (swarmVelocityXInWorld * 100);
+  *vy = (swarmVelocityYInWorld * 100);
   *gyroZ = swarmGyroZ;
   *height = (uint16_t)(swarmPositionZ * 100);
 }

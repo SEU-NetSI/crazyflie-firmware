@@ -21,9 +21,8 @@ static bool onGround = true;               // 无人机当前是否在地面上?
 static bool isCompleteTaskAndLand = false; // 无人机是否已经执行了飞行任务并落地?
 bool keepFlying = false;
 static setpoint_t setpoint;
-static float_t relaVarInCtrl[RANGING_TABLE_SIZE + 1][STATE_DIM_rl];
 static float_t neighbor_height[RANGING_TABLE_SIZE + 1];
-static currentNeighborAddressInfo_t currentNeighborAddressInfo;
+static Realtime_Relative_Location_t *realtimeRelativeLocation;
 static float_t set_height = 0.5;
 static paramVarId_t idMultiranger;
 static logVarId_t idUp;
@@ -139,8 +138,8 @@ static void formation0asCenter(float_t tarX, float_t tarY, float_t height)
   if (dt > 1) // skip the first run of the EKF
     return;
   // pid control for formation flight 当前是1号无人机
-  float err_x = -(tarX - relaVarInCtrl[0][STATE_rlX]);
-  float err_y = -(tarY - relaVarInCtrl[0][STATE_rlY]);
+  float err_x = -(tarX - realtimeRelativeLocation[0].S[STATE_rlX]);
+  float err_y = -(tarY - realtimeRelativeLocation[0].S[STATE_rlY]);
   float pid_vx = relaCtrl_p * err_x;  // 2.0*err_x 基于距离差进行一个速度控制
   float pid_vy = relaCtrl_p * err_y;  // 2.0*err_y
   float dx = (err_x - PreErr_x) / dt; // 先前的速度
@@ -371,12 +370,12 @@ void relativeControlTask(void *arg)
   // idMultiranger = paramGetVarId("deck", "bcMultiranger");
   // uint8_t multirangerInit = paramGetUint(idMultiranger);
   uint8_t multirangerInit = false;
+  realtimeRelativeLocation = getGlobalRealtimeLocation();
   while (1)
   {
     vTaskDelay(10);
     keepFlying = getOrSetKeepflying(MY_UWB_ADDRESS, keepFlying);
-    bool is_connect = relativeInfoRead((float_t *)relaVarInCtrl, (float_t *)neighbor_height, &currentNeighborAddressInfo);
-    relaVarInCtrl[0][STATE_rlYaw] = 0;
+    realtimeRelativeLocation[0].S[STATE_rlYaw] = 0;
     int8_t leaderStage = getLeaderStage();
     //DEBUG_PRINT("%d,%d\n",keepFlying,leaderStage);
     // if(RUNNING_STAGE==0){ // 调试
@@ -425,8 +424,8 @@ void relativeControlTask(void *arg)
           {
             setHoverSetpoint(&setpoint, 0, 0, set_height, 0);
           }
-          //  targetX = relaVarInCtrl[0][STATE_rlX];
-          // targetY = relaVarInCtrl[0][STATE_rlY];
+          //  targetX = realtimeRelativeLocation[0].S[STATE_rlX];
+          // targetY = realtimeRelativeLocation[0].S[STATE_rlY];
         }
         else if (leaderStage == SECOND_STAGE) // 第2个阶段跟随飞行
         {
@@ -441,8 +440,8 @@ void relativeControlTask(void *arg)
             int8_t index = MY_UWB_ADDRESS;
             if (MY_UWB_ADDRESS > 8)
               index = MY_UWB_ADDRESS + (MY_UWB_ADDRESS - 9) / 3;
-            targetX = -cosf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlX] + sinf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlY];
-            targetY = -sinf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlX] - cosf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlY];
+            targetX = -cosf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlX] + sinf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlY];
+            targetY = -sinf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlX] - cosf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlY];
             formation0asCenter(targetX, targetY, set_height);
           }
         }
@@ -469,8 +468,8 @@ void relativeControlTask(void *arg)
               if (index < 9)
                 index += 9;
             }
-            targetX = -cosf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlX] + sinf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlY];
-            targetY = -sinf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlX] - cosf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlY];
+            targetX = -cosf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlX] + sinf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlY];
+            targetY = -sinf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlX] - cosf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlY];
             formation0asCenter(targetX, targetY, set_height);
           }
         }
@@ -508,8 +507,8 @@ void relativeControlTask(void *arg)
           if (MY_UWB_ADDRESS > 8)
             index = MY_UWB_ADDRESS + (MY_UWB_ADDRESS - 9) / 3;
           DEBUG_PRINT("2:%d\n", index);
-          targetX = -cosf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlX] + sinf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlY];
-          targetY = -sinf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlX] - cosf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlY];
+          targetX = -cosf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlX] + sinf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlY];
+          targetY = -sinf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlX] - cosf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlY];
           //  formation0asCenter(targetX, targetY, set_height);
         }
       }
@@ -536,8 +535,8 @@ void relativeControlTask(void *arg)
               index += 9;
             DEBUG_PRINT("3:%d\n", index);
           }
-          targetX = -cosf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlX] + sinf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlY];
-          targetY = -sinf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlX] - cosf(relaVarInCtrl[0][STATE_rlYaw]) * targetList[index][STATE_rlY];
+          targetX = -cosf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlX] + sinf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlY];
+          targetY = -sinf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlX] - cosf(realtimeRelativeLocation[0].S[STATE_rlYaw]) * targetList[index][STATE_rlY];
           // formation0asCenter(targetX, targetY, set_height);
         }
       }

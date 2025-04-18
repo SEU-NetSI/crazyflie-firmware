@@ -125,6 +125,7 @@ static void rxTimeoutCallback() {
 }
 
 static void rxErrorCallback() {
+  dwt_rxenable(DWT_START_RX_IMMEDIATE);
   DEBUG_PRINT("rxErrorCallback: some error occurs when rx\n");
   dwt_rxenable(DWT_START_RX_IMMEDIATE);
 }
