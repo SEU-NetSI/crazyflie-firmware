@@ -30,9 +30,18 @@
 
 #define DEBUG_MODULE "DECK_INFO"
 
+// Uncomment to enable verbose debug prints during deck enumeration
+// #define DEBUG_DECK_ENUMERATION
+
+#ifdef DEBUG_DECK_ENUMERATION
+#define DECK_ENUM_DEBUG(fmt, ...) DEBUG_PRINT(fmt, ## __VA_ARGS__)
+#else
+#define DECK_ENUM_DEBUG(...)
+#endif
+
 #include "deck.h"
 
-#include "ow.h"
+#include "deck_discovery.h"
 #include "crc32.h"
 #include "debug.h"
 #include "static_mem.h"
@@ -55,8 +64,7 @@ static void scanRequiredSystemProperties(void);
 static StateEstimatorType requiredEstimator = StateEstimatorTypeAutoSelect;
 static bool registerRequiredEstimator(StateEstimatorType estimator);
 static bool requiredLowInterferenceRadioMode = false;
-
-static char* deck_force = CONFIG_DECK_FORCE;
+static bool requiredKalmanEstimatorAttitudeReversionOff = false;
 
 void deckInfoInit()
 {
@@ -86,20 +94,16 @@ DeckInfo * deckInfo(int i)
 }
 
 // Dummy driver for decks that do not have a driver implemented
-static const DeckDriver dummyDriver;
+const DeckDriver dummyDriver;
 
-#ifndef CONFIG_DEBUG_DECK_IGNORE_OWS
-static const DeckDriver * findDriver(DeckInfo *deck)
+const DeckDriver * findDriver(DeckInfo *deck)
 {
-  char name[30];
   const DeckDriver *driver = &dummyDriver;
-
-  deckTlvGetString(&deck->tlv, DECK_INFO_NAME, name, 30);
 
   if (deck->vid) {
     driver = deckFindDriverByVidPid(deck->vid, deck->pid);
-  } else if (strlen(name)>0) {
-    driver = deckFindDriverByName(name);
+  } else if (deck->productName && strlen(deck->productName) > 0) {
+    driver = deckFindDriverByName(deck->productName);
   }
 
   if (driver == NULL)
@@ -107,20 +111,13 @@ static const DeckDriver * findDriver(DeckInfo *deck)
 
   return driver;
 }
-#endif
 
 void printDeckInfo(DeckInfo *info)
 {
-  char name[30] = "NoName";
-  char rev[10] = "NoRev";
-
-  if (deckTlvHasElement(&info->tlv, DECK_INFO_NAME)) {
-    deckTlvGetString(&info->tlv, DECK_INFO_NAME, name, 30);
-  }
-
-  if (deckTlvHasElement(&info->tlv, DECK_INFO_REVISION)) {
-    deckTlvGetString(&info->tlv, DECK_INFO_REVISION, rev, 10);
-  }
+#ifdef CONFIG_DEBUG
+  const char *name = info->productName ? info->productName : "NoName";
+  const char *rev = info->boardRevision ? info->boardRevision : "NoRev";
+#endif
 
   DECK_INFO_DBG_PRINT("Deck %02x:%02x %s (Rev. %s)\n", info->vid, info->pid, name, rev);
   DECK_INFO_DBG_PRINT("Used pin: %08x\n", (unsigned int)info->usedPins);
@@ -133,120 +130,51 @@ void printDeckInfo(DeckInfo *info)
   }
 }
 
-#ifndef CONFIG_DEBUG_DECK_IGNORE_OWS
-static bool infoDecode(DeckInfo * info)
-{
-  uint8_t crcHeader;
-  uint8_t crcTlv;
-
-  if (info->header != DECK_INFO_HEADER_ID) {
-    DEBUG_PRINT("Memory error: wrong header ID\n");
-    return false;
-  }
-
-  crcHeader = crc32CalculateBuffer(info->raw, DECK_INFO_HEADER_SIZE);
-  if(info->crc != crcHeader) {
-    DEBUG_PRINT("Memory error: incorrect header CRC\n");
-    return false;
-  }
-
-  if(info->raw[DECK_INFO_TLV_VERSION_POS] != DECK_INFO_TLV_VERSION) {
-    DEBUG_PRINT("Memory error: incorrect TLV version\n");
-    return false;
-  }
-
-  crcTlv = crc32CalculateBuffer(&info->raw[DECK_INFO_TLV_VERSION_POS], info->raw[DECK_INFO_TLV_LENGTH_POS]+2);
-  if(crcTlv != info->raw[DECK_INFO_TLV_DATA_POS + info->raw[DECK_INFO_TLV_LENGTH_POS]]) {
-    DEBUG_PRINT("Memory error: incorrect TLV CRC %x!=%x\n", (unsigned int)crcTlv,
-                info->raw[DECK_INFO_TLV_DATA_POS + info->raw[DECK_INFO_TLV_LENGTH_POS]]);
-    return false;
-  }
-
-  info->tlv.data = &info->raw[DECK_INFO_TLV_DATA_POS];
-  info->tlv.length = info->raw[DECK_INFO_TLV_LENGTH_POS];
-
-  return true;
-}
-#endif
-
 static void enumerateDecks(void)
 {
   uint8_t nDecks = 0;
   bool noError = true;
 
-  owInit();
+  // Get all available discovery backends
+  int numBackends = deckDiscoveryBackendCount();
+  DECK_ENUM_DEBUG("Found %d discovery backends\n", numBackends);
 
-  if (owScan(&nDecks))
-  {
-    DECK_INFO_DBG_PRINT("Found %d deck memor%s.\n", nDecks, nDecks>1?"ies":"y");
-  } else {
-    DEBUG_PRINT("Error scanning for deck memories, "
-                "no deck drivers will be initialised\n");
-    nDecks = 0;
-  }
+  for (int backendIdx = 0; backendIdx < numBackends; backendIdx++) {
+    const DeckDiscoveryBackend_t* backend = deckDiscoveryGetBackend(backendIdx);
 
-#ifndef CONFIG_DEBUG_DECK_IGNORE_OWS
-  for (int i = 0; i < nDecks; i++)
-  {
-    DECK_INFO_DBG_PRINT("Enumerating deck %i\n", i);
-    if (owRead(i, 0, sizeof(deckInfos[0].raw), (uint8_t *)&deckInfos[i]))
-    {
-      if (infoDecode(&deckInfos[i]))
-      {
-        deckInfos[i].driver = findDriver(&deckInfos[i]);
-        printDeckInfo(&deckInfos[i]);
-      } else {
-#ifdef CONFIG_DEBUG
-        DEBUG_PRINT("Deck %i has corrupt OW memory. "
-                    "Ignoring the deck in DEBUG mode.\n", i);
-        deckInfos[i].driver = &dummyDriver;
-#else
-        DEBUG_PRINT("Deck %i has corrupt OW memory. "
-                    "No driver will be initialized!\n", i);
-        noError = false;
-#endif
+    if (!backend) {
+      DECK_ENUM_DEBUG("Backend %d is NULL\n", backendIdx);
+      continue;
+    }
+
+    DECK_ENUM_DEBUG("Trying backend: %s\n", backend->name);
+
+    if (!backend->init || !backend->init()) {
+      DECK_ENUM_DEBUG("Backend %s failed to initialize\n", backend->name);
+      continue;
+    }
+
+    // Get decks from this backend
+    DeckInfo* deckInfo;
+    while ((deckInfo = backend->getNextDeck()) != NULL) {
+      if (nDecks >= DECK_MAX_COUNT) {
+        DECK_ENUM_DEBUG("Warning: Maximum deck count (%d) reached\n", DECK_MAX_COUNT);
+        break;
       }
+
+      // Copy deck info to our array and set backend reference
+      deckInfos[nDecks] = *deckInfo;
+      deckInfos[nDecks].discoveryBackend = backend;
+
+      // Find appropriate driver for this deck
+      deckInfos[nDecks].driver = findDriver(&deckInfos[nDecks]);
+      printDeckInfo(&deckInfos[nDecks]);
+
+      DECK_INFO_DBG_PRINT("Added deck from backend %s\n", backend->name);
+      nDecks++;
     }
-    else
-    {
-      DEBUG_PRINT("Reading deck nr:%d [FAILED]. "
-                  "No driver will be initialized!\n", i);
-      noError = false;
-    }
-  }
-#else
-  DEBUG_PRINT("Ignoring all OW decks because of compile flag.\n");
-  nDecks = 0;
-#endif
 
-  // Add build-forced driver
-  if (strlen(deck_force) > 0 && strncmp(deck_force, "none", 4) != 0) {
-    DEBUG_PRINT("CONFIG_DECK_FORCE=%s found\n", deck_force);
-  	//split deck_force into multiple, separated by colons, if available
-    char delim[] = ":";
-
-    char temp_deck_force[strlen(deck_force) + 1];
-    strcpy(temp_deck_force, deck_force);
-    char * token = strtok(temp_deck_force, delim);
-
-    while (token) {
-      deck_force = token;
-
-      const DeckDriver *driver = deckFindDriverByName(deck_force);
-      if (!driver) {
-        DEBUG_PRINT("WARNING: compile-time forced driver %s not found\n", deck_force);
-      } else if (driver->init || driver->test) {
-        if (nDecks <= DECK_MAX_COUNT)
-        {
-          nDecks++;
-          deckInfos[nDecks - 1].driver = driver;
-          DEBUG_PRINT("compile-time forced driver %s added\n", deck_force);
-        } else {
-          DEBUG_PRINT("WARNING: No room for compile-time forced driver\n");
-        }
-      }
-      token = strtok(NULL, delim);
-    }
+    if (nDecks >= DECK_MAX_COUNT) break;
   }
 
   if (noError) {
@@ -296,61 +224,6 @@ static void checkPeriphAndGpioConflicts(void)
   }
 }
 
-/****** Key/value area handling ********/
-static int findType(TlvArea *tlv, int type) {
-  int pos = 0;
-
-  while (pos < tlv->length) {
-    if (tlv->data[pos] == type) {
-      return pos;
-    } else {
-      pos += tlv->data[pos+1]+2;
-    }
-  }
-  return -1;
-}
-
-bool deckTlvHasElement(TlvArea *tlv, int type) {
-  return findType(tlv, type) >= 0;
-}
-
-int deckTlvGetString(TlvArea *tlv, int type, char *string, int length) {
-  int pos = findType(tlv, type);
-  int strlength = 0;
-
-  if (pos >= 0) {
-    strlength = tlv->data[pos+1];
-
-    if (strlength > (length-1)) {
-      strlength = length-1;
-    }
-
-    memcpy(string, &tlv->data[pos+2], strlength);
-    string[strlength] = '\0';
-
-    return strlength;
-  } else {
-    string[0] = '\0';
-
-    return -1;
-  }
-}
-
-char* deckTlvGetBuffer(TlvArea *tlv, int type, int *length) {
-  int pos = findType(tlv, type);
-  if (pos >= 0) {
-    *length = tlv->data[pos+1];
-    return (char*) &tlv->data[pos+2];
-  }
-
-  return NULL;
-}
-
-void deckTlvGetTlv(TlvArea *tlv, int type, TlvArea *output) {
-  output->length = 0;
-  output->data = (uint8_t *)deckTlvGetBuffer(tlv, type, &output->length);
-}
-
 static void scanRequiredSystemProperties(void)
 {
   bool isError = false;
@@ -359,6 +232,7 @@ static void scanRequiredSystemProperties(void)
   {
     isError = isError || registerRequiredEstimator(deckInfos[i].driver->requiredEstimator);
     requiredLowInterferenceRadioMode |= deckInfos[i].driver->requiredLowInterferenceRadioMode;
+    requiredKalmanEstimatorAttitudeReversionOff |= deckInfos[i].driver->requiredKalmanEstimatorAttitudeReversionOff;
   }
 
   if (isError) {
@@ -396,4 +270,9 @@ StateEstimatorType deckGetRequiredEstimator()
 bool deckGetRequiredLowInterferenceRadioMode()
 {
   return requiredLowInterferenceRadioMode;
+}
+
+bool deckGetRequiredKalmanEstimatorAttitudeReversionOff()
+{
+  return requiredKalmanEstimatorAttitudeReversionOff;
 }

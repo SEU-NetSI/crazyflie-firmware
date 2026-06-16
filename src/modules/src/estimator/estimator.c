@@ -118,10 +118,12 @@ void stateEstimatorSwitchTo(StateEstimatorType estimator) {
 
   #if defined(CONFIG_ESTIMATOR_KALMAN)
     #define ESTIMATOR StateEstimatorTypeKalman
-  #elif defined(CONFIG_UKF_KALMAN)
+  #elif defined(CONFIG_ESTIMATOR_UKF)
     #define ESTIMATOR StateEstimatorTypeUkf
   #elif defined(CONFIG_ESTIMATOR_COMPLEMENTARY)
     #define ESTIMATOR StateEstimatorTypeComplementary
+  #elif defined(CONFIG_ESTIMATOR_OOT)
+    #define ESTIMATOR StateEstimatorTypeOutOfTree
   #else
     #define ESTIMATOR StateEstimatorTypeAutoSelect
   #endif

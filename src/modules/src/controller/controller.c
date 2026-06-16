@@ -7,6 +7,7 @@
 #include "controller_mellinger.h"
 #include "controller_indi.h"
 #include "controller_brescianini.h"
+#include "controller_lee.h"
 
 #include "autoconf.h"
 
@@ -28,6 +29,7 @@ static ControllerFcns controllerFunctions[] = {
   {.init = controllerMellingerFirmwareInit, .test = controllerMellingerFirmwareTest, .update = controllerMellingerFirmware, .name = "Mellinger"},
   {.init = controllerINDIInit, .test = controllerINDITest, .update = controllerINDI, .name = "INDI"},
   {.init = controllerBrescianiniInit, .test = controllerBrescianiniTest, .update = controllerBrescianini, .name = "Brescianini"},
+  {.init = controllerLeeFirmwareInit, .test = controllerLeeFirmwareTest, .update = controllerLeeFirmware, .name = "Lee"},
   #ifdef CONFIG_CONTROLLER_OOT
   {.init = controllerOutOfTreeInit, .test = controllerOutOfTreeTest, .update = controllerOutOfTree, .name = "OutOfTree"},
   #endif
@@ -39,29 +41,27 @@ void controllerInit(ControllerType controller) {
     return;
   }
 
-  currentController = controller;
+  ControllerType selectedController = controller;
 
-  if (ControllerTypeAutoSelect == currentController) {
-    currentController = DEFAULT_CONTROLLER;
+  if (selectedController == ControllerTypeAutoSelect) {
+    #if defined(CONFIG_CONTROLLER_PID)
+      selectedController = ControllerTypePID;
+    #elif defined(CONFIG_CONTROLLER_INDI)
+      selectedController = ControllerTypeINDI;
+    #elif defined(CONFIG_CONTROLLER_MELLINGER)
+      selectedController = ControllerTypeMellinger;
+    #elif defined(CONFIG_CONTROLLER_BRESCIANINI)
+      selectedController = ControllerTypeBrescianini;
+    #elif defined(CONFIG_CONTROLLER_LEE)
+      selectedController = ControllerTypeLee;
+    #elif defined(CONFIG_CONTROLLER_OOT)
+      selectedController = ControllerTypeOot;
+    #else
+      selectedController = DEFAULT_CONTROLLER;
+    #endif
   }
 
-  #if defined(CONFIG_CONTROLLER_PID)
-    #define CONTROLLER ControllerTypePID
-  #elif defined(CONFIG_CONTROLLER_INDI)
-    #define CONTROLLER ControllerTypeINDI
-  #elif defined(CONFIG_CONTROLLER_MELLINGER)
-    #define CONTROLLER ControllerTypeMellinger
-  #elif defined(CONFIG_CONTROLLER_BRESCIANINI)
-    #define CONTROLLER ControllerTypeBrescianini
-  #else
-    #define CONTROLLER ControllerTypeAutoSelect
-  #endif
-
-  ControllerType forcedController = CONTROLLER;
-  if (forcedController != ControllerTypeAutoSelect) {
-    DEBUG_PRINT("Controller type forced\n");
-    currentController = forcedController;
-  }
+  currentController = selectedController;
 
   initController();
 

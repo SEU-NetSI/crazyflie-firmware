@@ -1,4 +1,5 @@
 obj-$(CONFIG_PRINT_ON_SEGER_RT) += Segger_RTT/RTT
+obj-y += Segger_RTT/Syscalls/SEGGER_RTT_Syscalls_newlib_stubs.o
 obj-y += CMSIS/STM32F4xx/Source/system_stm32f4xx.o
 
 # FatFS

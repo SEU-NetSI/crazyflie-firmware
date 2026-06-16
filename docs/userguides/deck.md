@@ -13,10 +13,24 @@ running.
 Deck drivers
 ------------
 
-Decks are enumerated automatically using a One Wire (OW) memory soldered
-on the deck PCB. The Deck driver API is using a declarative syntax to
-register deck drivers and initialize them when the proper deck is
-installed.
+Decks are enumerated automatically using a modular discovery system that supports multiple backends:
+
+- **OneWire backend**: Reads deck information from One Wire (OW) memory soldered on the deck PCB
+- **DeckCtrl backend**: I2C-based intelligent discovery using deck controller microcontrollers
+- **Forced backend**: Allows compile-time forcing of deck drivers via `CONFIG_DECK_FORCE` (for development)
+
+The architecture is extensible: New discovery backends can be added for different communication protocols. Each backend is called sequentially during system initialization to discover all connected decks.
+
+### Discovery backend configuration
+
+Backends can be enabled or disabled via KConfig options:
+- `CONFIG_DECK_BACKEND_ONEWIRE` - Enable OneWire backend (typically always enabled)
+- `CONFIG_DECK_BACKEND_DECKCTRL` - Enable DeckCtrl backend
+- `CONFIG_DECK_BACKEND_DECKCTRL_MAX_DECKS` - Maximum number of DeckCtrl decks to enumerate
+
+Discovery runs at startup in the order backends are registered. All enabled backends are queried to build the complete list of connected decks.
+
+The Deck driver API uses a declarative syntax to register deck drivers and initialize them when the proper deck is detected through any of the discovery backends.
 
 ### Minimal driver
 
@@ -71,9 +85,12 @@ obj-y += myled.o
 ### Forcing initialization of a driver
 
 The deck driver will be initialized only if a deck is connected with the
-right OW memory content. During development it is possible to force the
-initialization of a deck by setting the `CONFIG_DECK_FORCE` config option
-to `"meMyled"` in your `.config` either by hand or using `make menuconfig`.
+right OW memory content or other discovery method detects it. During development 
+it is possible to force the initialization of one or more decks by setting the 
+`CONFIG_DECK_FORCE` config option in your `.config` either by hand or using `make menuconfig`:
+
+- Single deck: `CONFIG_DECK_FORCE="meMyled"`
+- Multiple decks: `CONFIG_DECK_FORCE="meMyled:anotherDeck"`
 
 ### Driver declaration API
 
@@ -107,6 +124,7 @@ typedef struct deck_driver {
 
   /* Required system properties */
   StateEstimatorType requiredEstimator;
+  bool requiredKalmanEstimatorAttitudeReversionOff;
   bool requiredLowInterferenceRadioMode;
 
   // Deck memory access definitions

@@ -87,7 +87,7 @@ static uint8_t limitServoNeutral(uint8_t value)
   return (uint8_t)value;
 }
 
-static int8_t limitRollBias(uint8_t value)
+static int8_t limitRollBias(int8_t value)
 {
   if(value > 25)
   {
@@ -202,6 +202,12 @@ bool powerDistributionCap(const motors_thrust_uncapped_t* motorThrustBatCompUnca
 
 uint32_t powerDistributionGetIdleThrust() {
   return idleThrust;
+}
+
+float powerDistributionGetMaxThrust() {
+  // Unknown
+  ASSERT(false);
+  return 0.0f;
 }
 
 /**

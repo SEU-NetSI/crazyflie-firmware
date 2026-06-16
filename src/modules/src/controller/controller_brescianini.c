@@ -23,11 +23,13 @@
  * Academic citation would be appreciated.
  *
  * BIBTEX ENTRIES:
+ * \verbatim
       @ARTICLE{BrescianiniNonlinearController2013,
                title={Nonlinear quadrocopter attitude control},
                author={Brescianini, Dario and Hehn, Markus and D'Andrea, Raffaello},
                year={2013},
                publisher={ETH Zurich}}
+ * \endverbatim
  *
  * ============================================================================
  */
@@ -38,6 +40,7 @@
 #include "num.h"
 #include "math3d.h"
 #include "physicalConstants.h"
+#include "platform_defaults.h"
 
 static struct mat33 CRAZYFLIE_INERTIA =
     {{{16.6e-6f, 0.83e-6f, 0.72e-6f},
@@ -363,7 +366,7 @@ void controllerBrescianini(control_t *control,
     }
 
     if (control_omega[2] * omega[2] < 0 && fabsf(omega[2]) > heuristic_yaw) { // desired rotational rate in direction opposite to current rotational rate
-      control_omega[2] = omega_rp_max * (omega[2] < 0 ? -1 : 1); // maximum rotational rate in direction of current rotation
+      control_omega[2] = omega_yaw_max * (omega[2] < 0 ? -1 : 1); // maximum rotational rate in direction of current rotation
     }
 
     // scale the commands to satisfy rate constraints

@@ -83,6 +83,7 @@ static bool modeSet = false;
 /**
  * Rotate Yaw so that the Crazyflie will change what is considered front.
  *
+ * @param setpoint Setpoint to rotate.
  * @param yawRad Amount of radians to rotate yaw.
  */
 static void rotateYaw(setpoint_t *setpoint, float yawRad)
@@ -140,7 +141,7 @@ void crtpCommanderRpytDecodeSetpoint(setpoint_t *setpoint, CRTPPacket *pk)
   if (altHoldMode) {
     if (!modeSet) {             //Reset filter and PID values on first initiation of assist mode to prevent sudden reactions.
       modeSet = true;
-      positionControllerResetAllPID();
+      positionControllerResetAllPID(0, 0, 0); // TODO: initialize with actual x, y, z position
       positionControllerResetAllfilters();
     }
     setpoint->thrust = 0;

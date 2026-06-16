@@ -85,6 +85,13 @@ config DECK_BIGQUAD_ENABLE_PM
     bool "Enable Bigquad deck PM"
     default n
 
+config DECK_BIGQUAD_ENABLE_CPPM
+    depends on DECK_BIGQUAD
+    bool "Enable Bigquad deck CPPM"
+    default n
+    help
+      This enables external CPPM input.
+
 config DECK_BUZZ
     bool "Support the Buzzer deck"
     default n
@@ -302,6 +309,7 @@ config DECK_LOCO
   config DECK_LOCO_NR_OF_ANCHORS
   int "The number of anchors in use"
   default 8
+  range 4 8
   depends on DECK_LOCO
   help
       The number of anchors in your Loco setup. See documentation on
@@ -375,6 +383,21 @@ config DECK_LOCO_2D_POSITION_HEIGHT
     depends on DECK_LOCO_2D_POSITION
     default 1.2
 
+choice
+    prompt "SPI clock speed (high speed mode)"
+    depends on DECK_LOCO
+    default DECK_LOCO_SPI_SPEED_21MHZ
+    help
+        SPI clock speed used when communicating with the DW1000 in PLL mode.
+
+    config DECK_LOCO_SPI_SPEED_21MHZ
+        bool "21 MHz"
+
+    config DECK_LOCO_SPI_SPEED_12MHZ
+        bool "11.5 MHz"
+
+endchoice
+
 config DECK_MULTIRANGER
     bool "Support the Multi-ranger deck"
     default n
@@ -389,6 +412,37 @@ config DECK_OA
     default n
     help
         Codename: Obstacle Avoidance driver, obsolete deck.
+
+config DECK_SERVO
+    bool "Support the servo deck (prototype/via BigQuad deck)"
+    default n
+    help
+      Servo PWM driver.
+
+choice
+    prompt "Servo pin"
+    depends on DECK_SERVO
+    default DECK_SERVO_USE_TX2
+
+    config DECK_SERVO_USE_TX2
+        bool "PA2/TX2"
+
+    config DECK_SERVO_USE_RX2
+        bool "PA3/RX2"
+
+    config DECK_SERVO_USE_IO1
+        bool "PB8/IO_1"
+
+    config DECK_SERVO_USE_IO2
+        bool "PB5/IO_2"
+
+    config DECK_SERVO_USE_IO3
+        bool "PB4/IO_3"
+
+    config DECK_SERVO_USE_MOSI
+        bool "PA7/MOSI"
+
+endchoice
 
 config DECK_USD
     bool "Support the Micro SD card deck"
@@ -468,3 +522,35 @@ config DECK_ADHOC
   help
        ADHOC deck alternative IRQ and RESET pins(TX2, RX2) instead of
        default (RX1, TX1).
+config DECK_ACS37800
+    bool "Support for the power measurement deck"
+    default n
+    help
+        Enables the support for the ACS37800 chip that can measure power/current/voltage.
+
+config DECK_RPM
+    bool "Support the rpm deck"
+    default y
+    help
+        Enables the rpm deck that can be usfull in testing.
+
+config DECK_LOADCELL
+    bool "Support for loadcell NAU7802"
+    default n
+    help
+        Enables the support for the NAU7802 loadcell.
+
+config DECK_DECKCTRL_DEVBOARD
+    depends on DECK_BACKEND_DECKCTRL
+    bool "Support for the deckctrl devboard deck"
+    default n
+    help
+        Enables the support for the deckctrl devboard deck.
+        This deck is used for the deckctrl development.
+
+config DECK_COLORLED
+    depends on DECK_BACKEND_DECKCTRL
+    bool "Support for Color LED deck"
+    default y
+    help
+        Enables the support for Color LED deck.

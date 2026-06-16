@@ -6,6 +6,8 @@
 
 #include "mac.h"
 
+#include "autoconf.h"
+
 #define LPS_TWR_POLL 0x01   // Poll is initiated by the tag
 #define LPS_TWR_ANSWER 0x02
 #define LPS_TWR_FINAL 0x03
@@ -21,12 +23,7 @@
 #define LPS_TWR_LPP_PAYLOAD 4
 
 #define LPS_TWR_SEND_LPP_PAYLOAD 1
-
-#ifdef LOCODECK_NR_OF_ANCHORS
-#define LOCODECK_NR_OF_TWR_ANCHORS LOCODECK_NR_OF_ANCHORS
-#else
-#define LOCODECK_NR_OF_TWR_ANCHORS 8
-#endif
+#define LOCODECK_NR_OF_TWR_ANCHORS CONFIG_DECK_LOCO_NR_OF_ANCHORS
 
 extern uwbAlgorithm_t uwbTwrTagAlgorithm;
 

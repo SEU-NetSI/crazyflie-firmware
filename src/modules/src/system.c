@@ -325,9 +325,13 @@ void systemTask(void *arg)
   }
   DEBUG_PRINT("Free heap: %d bytes\n", xPortGetFreeHeapSize());
 
-  workerLoop();
+  // Notify the nRF51 that we are ready to receive radio packets
+  // This is done after systemStart() to ensure all services
+  // are ready to process packets, not just queue them.
+  // Note: If this is never reached (e.g., self-test failure),
+  // the nRF51 will timeout and enable radio anyway for debugging.
+  systemSendRadioReady();
 
-  //Should never reach this point!
   while(1)
     vTaskDelay(portMAX_DELAY);
 }
@@ -362,11 +366,29 @@ void systemRequestShutdown()
   syslinkSendPacket(&slp);
 }
 
+void systemRequestShutdownSTM()
+{
+  SyslinkPacket slp;
+
+  slp.type = SYSLINK_PM_ONOFF_STM_OFF;
+  slp.length = 0;
+  syslinkSendPacket(&slp);
+}
+
 void systemRequestNRFVersion()
 {
   SyslinkPacket slp;
 
   slp.type = SYSLINK_SYS_NRF_VERSION;
+  slp.length = 0;
+  syslinkSendPacket(&slp);
+}
+
+void systemSendRadioReady()
+{
+  SyslinkPacket slp;
+
+  slp.type = SYSLINK_RADIO_READY;
   slp.length = 0;
   syslinkSendPacket(&slp);
 }

@@ -170,6 +170,23 @@ ledseqContext_t seq_testFailed = {
   .led = SYS_LED,
 };
 
+ledseqStep_t seq_user_notification_def[] = {
+  { true, LEDSEQ_WAITMS(1000)},
+  {false, LEDSEQ_WAITMS(100)},
+  {    0, LEDSEQ_STOP},
+};
+
+ledseqContext_t seq_user_notification_success = {
+  .sequence = seq_user_notification_def,
+  .led = USER_NOTF_LED,
+};
+
+ledseqContext_t seq_user_notification_fail = {
+  .sequence = seq_user_notification_def,
+  .led = ERR_LED2,
+};
+
+
 struct ledseqCmd_s {
   enum {run, stop} command;
   ledseqContext_t *sequence;
@@ -205,10 +222,12 @@ void ledseqInit() {
   ledseqRegisterSequence(&seq_lowbat);
   ledseqRegisterSequence(&seq_charged);
   ledseqRegisterSequence(&seq_charging);
+  ledseqRegisterSequence(&seq_user_notification_fail);
   ledseqRegisterSequence(&seq_calibrated);
   ledseqRegisterSequence(&seq_alive);
   ledseqRegisterSequence(&seq_linkUp);
   ledseqRegisterSequence(&seq_linkDown);
+  ledseqRegisterSequence(&seq_user_notification_success);
 
   //Initialise the sequences state
   for(int i=0; i<LED_NUM; i++) {
@@ -326,13 +345,11 @@ static void runLedseq( xTimerHandle xTimer ) {
 
   led_t led = (led_t)pvTimerGetTimerID(xTimer);
   ledseqContext_t* context = activeSeq[led];
-  if (NO_CONTEXT == context) {
-    return;
-  }
 
+  // Iterate until we find a step to use or all sequences are stopped
   bool leave = false;
   while(!leave) {
-    if (context->state == LEDSEQ_STOP) {
+    if (NO_CONTEXT == context) {
       return;
     }
 
@@ -348,7 +365,10 @@ static void runLedseq( xTimerHandle xTimer ) {
         break;
       case LEDSEQ_STOP:
         context->state = LEDSEQ_STOP;
+
+        // This sequence is stopped, try to find another sequence with lower priority that is running.
         updateActive(led);
+        context = activeSeq[led];
         break;
       default:  //The step is a LED action and a time
         ledSet(led, step->value);

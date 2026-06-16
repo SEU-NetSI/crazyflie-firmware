@@ -5,56 +5,10 @@ sort_order: 2
 ---
 
 ## State diagram
-{% ditaa --alt "Supervisor states" %}
-     Boot|
-         V
-+-------------------+
-+  Not initialized  +
-+                   +
-+--------+----------+
-         |
-         V
-+-------------------+
-+ Pre-flight checks +<------------+
-+    not passed     +<--+         |
-+-------+-----------+   |         |
-        | ^             |         |
-        V |             |         |
-+---------+---------+   |         |
-+ Pre-flight checks +   |         |
-+      passed       +   |         |
-+-------+-----------+   |         |
-        | ^             | +-------+---------+
-  Arming| |             | +      Reset      +
-        V |             | +                 +
-+---------+---------+   | +-----------------+
-+   Ready to fly    +---+        ^
-+                   +            |
-+--------+----------+            |
-         |                       |
-         V                       |
-+-------------------+            |         +-------------------+
-+      Flying       +------------|-------->+      Warning      +
-+                   +<-----------|---------+     Level out     +
-+--------+-------+--+            |         +---------+---------+
-         |       |               |                   |
-         V       +---------------|-----+             V
-+-------------------+            |     |   +-------------------+
-+      Landed       +------------+     +-->+     Exception     +
-+                   |                      +     Free fall     +
-+--------+----------+                      +---------+---------+
-                                                     |
-                                                     |
-                                      +--------------+
-                                      |
-                                      V
-                      +-------------------+
-                      +       Lock        +
-                      +                   +
-                      +-------------------+
-{% endditaa %}
 
 All states can be found in the `src/modules/interface/supervisor_state_machine.h` file.
+
+![supervisor state diagram](/docs/images/supervisor_state_diagram.svg){:align-center}
 
 ## State transitions
 

@@ -19,11 +19,13 @@
 #include "num.h"
 #include "controller_mellinger.h"
 #include "controller_brescianini.h"
+#include "controller_lee.h"
 #include "power_distribution.h"
 #include "axis3fSubSampler.h"
 #include "outlierFilterTdoa.h"
 #include "kalman_core.h"
 #include "mm_tdoa.h"
+#include "mm_pose.h"
 %}
 
 %include "math3d.h"
@@ -35,11 +37,13 @@
 %include "imu_types.h"
 %include "controller_mellinger.h"
 %include "controller_brescianini.h"
+%include "controller_lee.h"
 %include "power_distribution.h"
 %include "axis3fSubSampler.h"
 %include "outlierFilterTdoa.h"
 %include "kalman_core.h"
 %include "mm_tdoa.h"
+%include "mm_pose.h"
 
 
 %inline %{

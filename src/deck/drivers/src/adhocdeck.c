@@ -81,10 +81,10 @@ static void txCallback() {
 }
 
 /* Packet dispatcher */
-static void rxCallback() {
+static void rxCallback(dwt_cb_data_t *cbData) {
   BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
-  uint32_t dataLength = dwt_read32bitreg(RX_FINFO_ID) & RX_FINFO_RXFLEN_BIT_MASK;
+  uint32_t dataLength = cbData->datalength;
 
   ASSERT(dataLength != 0 && dataLength <= UWB_FRAME_LEN_MAX);
 
@@ -111,16 +111,17 @@ static void rxCallback() {
     xQueueSendFromISR(listeners[msgType].rxQueue, packet, &xHigherPriorityTaskWoken);
   }
 
-  dwt_forcetrxoff();
+  // dwt_forcetrxoff();
   dwt_rxenable(DWT_START_RX_IMMEDIATE);
 }
 
 static void rxTimeoutCallback() {
-  dwt_forcetrxoff();
+  // dwt_forcetrxoff();
   dwt_rxenable(DWT_START_RX_IMMEDIATE);
 }
 
 static void rxErrorCallback() {
+  dwt_rxenable(DWT_START_RX_IMMEDIATE);
   DEBUG_PRINT("rxErrorCallback: some error occurs when rx\n");
 }
 
@@ -268,7 +269,7 @@ static void uwbTask(void *parameters) {
 
 static uint8_t spiTxBuffer[UWB_FRAME_LEN_MAX];
 static uint8_t spiRxBuffer[UWB_FRAME_LEN_MAX];
-static uint16_t spiSpeed = SPI_BAUDRATE_2MHZ;
+static uint16_t spiSpeed = SPI_BAUDRATE_21MHZ;
 
 static void spiWrite(const void *header, size_t headerLength, const void *data,
                      size_t dataLength) {

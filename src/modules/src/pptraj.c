@@ -309,7 +309,7 @@ struct traj_eval poly4d_eval(struct poly4d const *p, float t)
 
 	// 3rd derivative
 	polyder4d(deriv);
-	struct vec jerk = polyval_xyz(deriv, t);
+	out.jerk = polyval_xyz(deriv, t);
 
 	struct vec thrust = vadd(out.acc, mkvec(0, 0, GRAV));
 	// float thrust_mag = mass * vmag(thrust);
@@ -319,7 +319,7 @@ struct traj_eval poly4d_eval(struct poly4d const *p, float t)
 	struct vec y_body = vnormalize(vcross(z_body, x_world));
 	struct vec x_body = vcross(y_body, z_body);
 
-	struct vec jerk_orth_zbody = vorthunit(jerk, z_body);
+	struct vec jerk_orth_zbody = vorthunit(out.jerk, z_body);
 	struct vec h_w = vscl(1.0f / vmag(thrust), jerk_orth_zbody);
 
 	out.omega.x = -vdot(h_w, y_body);
@@ -327,6 +327,20 @@ struct traj_eval poly4d_eval(struct poly4d const *p, float t)
 	out.omega.z = z_body.z * dyaw;
 
 	return out;
+}
+
+void traj_eval_transform(struct traj_eval *ev, struct vec shift, float rotation)
+{
+	struct mat33 rotator = mrotz(normalize_radians(rotation));
+
+	// rotate position, velocity, acceleration
+	ev->pos = mvmul(rotator, ev->pos);
+	ev->vel = mvmul(rotator, ev->vel);
+	ev->acc = mvmul(rotator, ev->acc);
+
+	// shift
+	ev->yaw += normalize_radians(rotation);
+	ev->pos = vadd(ev->pos, shift);
 }
 
 //
@@ -343,9 +357,15 @@ struct traj_eval piecewise_eval(
 		struct poly4d const *piece = &(traj->pieces[cursor]);
 		if (t <= piece->duration * traj->timescale) {
 			poly4d_tmp = *piece;
-			poly4d_shift(&poly4d_tmp, traj->shift.x, traj->shift.y, traj->shift.z, 0);
 			poly4d_stretchtime(&poly4d_tmp, traj->timescale);
-			return poly4d_eval(&poly4d_tmp, t);
+
+			// evaluate polynomial
+			struct traj_eval ev = poly4d_eval(&poly4d_tmp, t);
+
+			// rotate and shift output of polynomial
+			traj_eval_transform(&ev, traj->shift, traj->shift_yaw);
+
+			return ev;
 		}
 		t -= piece->duration * traj->timescale;
 		++cursor;
@@ -353,9 +373,11 @@ struct traj_eval piecewise_eval(
 	// if we get here, the trajectory has ended
 	struct poly4d const *end_piece = &(traj->pieces[traj->n_pieces - 1]);
 	struct traj_eval ev = poly4d_eval(end_piece, end_piece->duration);
-	ev.pos = vadd(ev.pos, traj->shift);
+	traj_eval_transform(&ev, traj->shift, traj->shift_yaw);
+
 	ev.vel = vzero();
 	ev.acc = vzero();
+	ev.jerk = vzero();
 	ev.omega = vzero();
 	return ev;
 }
@@ -386,6 +408,7 @@ struct traj_eval piecewise_eval_reversed(
 	ev.pos = vadd(ev.pos, traj->shift);
 	ev.vel = vzero();
 	ev.acc = vzero();
+	ev.jerk = vzero();
 	ev.omega = vzero();
 	return ev;
 }

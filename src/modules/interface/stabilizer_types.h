@@ -65,6 +65,7 @@ typedef struct vec3_s vector_t;
 typedef struct vec3_s point_t;
 typedef struct vec3_s velocity_t;
 typedef struct vec3_s acc_t;
+typedef struct vec3_s jerk_t;
 
 /* Orientation as a quaternion */
 typedef struct quaternion_s {
@@ -187,6 +188,7 @@ typedef enum control_mode_e {
   controlModeLegacy      = 0, // legacy mode with int16_t roll, pitch, yaw and float thrust
   controlModeForceTorque = 1,
   controlModeForce       = 2,
+  controlModePWM         = 3, // PWM of each motor within [0..1]
 } control_mode_t;
 
 typedef struct control_s {
@@ -257,6 +259,7 @@ typedef struct setpoint_s {
   point_t position;         // m
   velocity_t velocity;      // m/s
   acc_t acceleration;       // m/s^2
+  jerk_t jerk;              // m/s^3
   bool velocity_body;       // true if velocity is given in body frame; false if velocity is given in world frame
 
   struct {

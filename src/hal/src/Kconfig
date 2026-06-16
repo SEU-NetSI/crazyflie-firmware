@@ -43,4 +43,11 @@ config CPX_UART2_BAUDRATE
   help
       Set the baudrate that will be used for CPX on UART2
 
+config RADIO_ACTIVITY_TIMEOUT_MS
+  int "Radio activity timeout (ms)"
+  default 1000
+  help
+      Timeout in milliseconds since the last radio packet was received
+      before the radio is considered inactive.
+
 endmenu

@@ -41,6 +41,7 @@ fw_sources = [
     "src/modules/src/controller/attitude_pid_controller.c",
     "src/modules/src/controller/controller_mellinger.c",
     "src/modules/src/controller/controller_brescianini.c",
+    "src/modules/src/controller/controller_lee.c",
     "src/utils/src/pid.c",
     "src/utils/src/filter.c",
     "src/utils/src/num.c",
@@ -49,6 +50,7 @@ fw_sources = [
     "src/modules/src/axis3fSubSampler.c",
     "src/modules/src/kalman_core/kalman_core.c",
     "src/modules/src/kalman_core/mm_tdoa.c",
+    "src/modules/src/kalman_core/mm_pose.c",
     "src/modules/src/outlierfilter/outlierFilterTdoa.c",
 ]
 

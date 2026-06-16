@@ -60,6 +60,10 @@ obj-y += your-app.o
 
 You can look at the applications in the `examples/` folder of the firmware repository.
 
+## Configuring the app layer
+
+The app layer can be configured with [Kbuild](https://www.bitcraze.io/documentation/repository/crazyflie-firmware/master/development/kbuild/). Default configurations can be loaded by running `make cf2_defconfig` in the app directory.  Terminal based user interfaces ('menuconfig', 'nconfig', 'gconfig', 'xconfig') can be used to configure the app layer by e.g. running `make menuconfig` in the app directory. Note that if there are any conflicting settings, the values defined in `app-config` will take priority.
+
 ## Building the app layer
 
 In order to build the app layer, go to the root folder of the app example and run:
@@ -79,6 +83,18 @@ tb make_app examples/app_hello_world/ -j8
 Then flash the resulting bin on your crazyflie according to [the flashing instructions](/docs/building-and-flashing/build.md). Make sure to point to the right build binary.
 
 
+> **Note:** If you are using **macOS** you may encounter errors when trying to build your app, such as: 
+> ```
+> readlink: illegal option -- m
+> sed: invalid command code .
+> cp: illegal option -- T
+> ```
+> This happens because the app-layer build expects the GNU versions of `readlink`, `sed` and `cp`. To fix the errors, install and use the GNU utilities:
+> ```
+> brew install coreutils gnu-sed
+> ```
+
+
 ## Internal log and param system
 
 For the app-layer, it would be good to have access to log and/or parameter values and to set parameter values. This way, your app will be able to read out sensor data or to switch controller/estimator on air. To check out these functions, look at `src/modules/interface/log.h` or `.../param.h` for the internal access functions. There is also an example to be found in `/examples/app_internal_param_log/`.
@@ -92,7 +108,7 @@ It is possible to run LED sequences from the app layer to control the four LEDs 
 ## App channel: packet based communication between the Crazyflie and the Python lib
 
 The Appchannel API allows to communicate using radio packets with an app.
-The packets can contain anything of a size up to 31 bytes, the protocol is defined by the app.
+The packets can contain anything of a size up to 30 bytes, the protocol is defined by the app.
 
 For more information about the API see the header file `src/modules/interface/app_channel.h`.
 An example of how to use the app channel is in `examples/app_appchannel_test/`

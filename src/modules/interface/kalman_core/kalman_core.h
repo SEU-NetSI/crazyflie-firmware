@@ -29,6 +29,7 @@
  *
  * Academic citation would be appreciated.
  *
+ * \verbatim
  * BIBTEX ENTRIES:
       @INPROCEEDINGS{MuellerHamerUWB2015,
       author  = {Mueller, Mark W and Hamer, Michael and D'Andrea, Raffaello},
@@ -47,6 +48,7 @@
       pages={1--7},
       year={2016},
       publisher={American Institute of Aeronautics and Astronautics}}
+ * \endverbatim
  *
  * ============================================================================
  */
@@ -129,9 +131,31 @@ typedef struct {
   // PI --- facing negative X
   // 3 * PI / 2 --- facing negative Y
   float initialYaw;
+
+  float attitudeReversion;
+
+  float dragB_x;
+  float dragB_y;
+  float dragB_z;
+
+  float cop_x;
+  float cop_y;
+  float cop_z;
 } kalmanCoreParams_t;
 
-/*  - Load default parameters */
+/**
+ * @brief Initialize Kalman core parameters with default values
+ *
+ * This function exists primarily for Python bindings to initialize their own
+ * kalmanCoreParams_t structs. In the firmware, default parameters are initialized
+ * via a static initializer in estimator_kalman.c to avoid overwriting persistent
+ * parameters loaded from storage.
+ *
+ * Default values are defined in kalman_core_params_defaults.h to maintain a
+ * single source of truth.
+ *
+ * @param params Pointer to the parameter struct to initialize
+ */
 void kalmanCoreDefaultParams(kalmanCoreParams_t *params);
 
 /*  - Initialize Kalman State */
@@ -147,7 +171,7 @@ void kalmanCoreUpdateWithBaro(kalmanCoreData_t *this, const kalmanCoreParams_t *
  *
  * The filter progresses as:
  *  - Predicting the current state forward */
-void kalmanCorePredict(kalmanCoreData_t *this, Axis3f *acc, Axis3f *gyro, const uint32_t nowMs, bool quadIsFlying);
+void kalmanCorePredict(kalmanCoreData_t *this, const kalmanCoreParams_t *params, Axis3f *acc, Axis3f *gyro, const uint32_t nowMs, bool quadIsFlying);
 
 void kalmanCoreAddProcessNoise(kalmanCoreData_t *this, const kalmanCoreParams_t *params, const uint32_t nowMs);
 

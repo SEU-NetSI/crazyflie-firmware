@@ -77,8 +77,9 @@ typedef float * (*paramGetterFloat)(void);
 // Extended type bits
 #define PARAM_PERSISTENT (1 << 8)
 
-#define PARAM_PERSISTENT_STORED      1
 #define PARAM_PERSISTENT_NOT_STORED  0
+#define PARAM_PERSISTENT_STORED      1
+#define PARAM_NOT_FOUND              2
 
 // User-friendly macros
 #define PARAM_UINT8 (PARAM_1BYTE | PARAM_TYPE_INT | PARAM_UNSIGNED)
@@ -98,21 +99,26 @@ typedef float * (*paramGetterFloat)(void);
 // CRTP Misc
 #define MISC_SETBYNAME            0
 #define MISC_VALUE_UPDATED        1
-#define MISC_GET_EXTENDED_TYPE    2
+#define MISC_GET_EXTENDED_TYPE    2  // Deprecated: Use MISC_GET_EXTENDED_TYPE_V2 (CRTP protocol v11+)
 #define MISC_PERSISTENT_STORE     3
 #define MISC_PERSISTENT_GET_STATE 4
 #define MISC_PERSISTENT_CLEAR     5
-#define MISC_GET_DEFAULT_VALUE    6
+#define MISC_GET_DEFAULT_VALUE    6  // Deprecated: Use MISC_GET_DEFAULT_VALUE_V2 (CRTP protocol v11+)
+#define MISC_GET_EXTENDED_TYPE_V2 7
+#define MISC_GET_DEFAULT_VALUE_V2 8
 
 /* Macros */
 
 #define PARAM_ADD_FULL(TYPE, NAME, ADDRESS, CALLBACK, DEFAULT_GETTER) \
-    { .type = ((TYPE) <= 0xFF) ? (TYPE) : (((TYPE) | PARAM_EXTENDED) & 0xFF), \
+    { .type = ((TYPE) <= 0xFF) ? ((TYPE) & 0xFF) : (((TYPE) | PARAM_EXTENDED) & 0xFF), \
       .extended_type = (((TYPE) & 0xFF00) >> 8), \
       .name = #NAME, \
       .address = (void*)(ADDRESS), \
-      .callback = (void *)CALLBACK, \
-      .getter = (void *)DEFAULT_GETTER, },
+      .callback = (void (*) (void)) CALLBACK, \
+      .getter = (void *(*)(void))DEFAULT_GETTER, },
+
+// Storing (TYPE) & 0xFF instead of just (TYPE) in the first branch is a no-op,
+// but it prevents noisy spurious warnings when compiling bindings with Clang.
 
 #define PARAM_ADD(TYPE, NAME, ADDRESS) \
     PARAM_ADD_FULL(TYPE, NAME, ADDRESS, 0, 0)

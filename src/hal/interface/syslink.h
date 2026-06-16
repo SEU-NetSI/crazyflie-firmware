@@ -50,6 +50,7 @@
 #define SYSLINK_RADIO_P2P           0x08
 #define SYSLINK_RADIO_P2P_ACK       0x09
 #define SYSLINK_RADIO_P2P_BROADCAST 0x0A
+#define SYSLINK_RADIO_READY         0x0B
 
 #define SYSLINK_PM_GROUP              0x10
 #define SYSLINK_PM_SOURCE             0x10
@@ -61,6 +62,9 @@
 #define SYSLINK_PM_SHUTDOWN_ACK       0x16
 #define SYSLINK_PM_LED_ON             0x17
 #define SYSLINK_PM_LED_OFF            0x18
+#define SYSLINK_PM_DECKCTRL_DFU       0x19
+#define SYSLINK_PM_ONOFF_STM_OFF      0x1A
+
 
 #define SYSLINK_OW_GROUP    0x20
 #define SYSLINK_OW_SCAN     0x20

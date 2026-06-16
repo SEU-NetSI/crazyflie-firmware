@@ -47,9 +47,9 @@ static STATS_CNT_RATE_DEFINE(positionRate, ONE_SECOND);
 static STATS_CNT_RATE_DEFINE(estBs0Rate, HALF_SECOND);
 static STATS_CNT_RATE_DEFINE(estBs1Rate, HALF_SECOND);
 
-#ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
+// #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
 static statsCntRateLogger_t* bsEstRates[CONFIG_DECK_LIGHTHOUSE_MAX_N_BS] = {&estBs0Rate, &estBs1Rate};
-#endif
+// #endif
 
 // The light planes in LH2 are tilted +- 30 degrees
 static const float t30 = M_PI / 6;
@@ -60,9 +60,9 @@ static void preProcessGeometryData(mat3d bsRot, mat3d bsRotInverted, mat3d lh1Ro
 // Geometry memory handling for the memory module
 static const uint32_t calibStartAddr = 0x1000;
 static const uint32_t pageSize = 0x100;
-static uint32_t handleMemGetSize(void) { return calibStartAddr + sizeof(lighthouseCoreState.bsCalibration); }
-static bool handleMemRead(const uint32_t memAddr, const uint8_t readLen, uint8_t* buffer);
-static bool handleMemWrite(const uint32_t memAddr, const uint8_t writeLen, const uint8_t* buffer);
+static uint32_t handleMemGetSize(const uint8_t internal_id) { return calibStartAddr + sizeof(lighthouseCoreState.bsCalibration); }
+static bool handleMemRead(const uint8_t internal_id, const uint32_t memAddr, const uint8_t readLen, uint8_t* buffer);
+static bool handleMemWrite(const uint8_t internal_id, const uint32_t memAddr, const uint8_t writeLen, const uint8_t* buffer);
 static const MemoryHandlerDef_t memDef = {
   .type = MEM_TYPE_LH,
   .getSize = handleMemGetSize,
@@ -87,7 +87,7 @@ void lighthousePositionEstInit() {
   memoryRegisterHandler(&memDef);
 }
 
-static bool handleMemRead(const uint32_t memAddr, const uint8_t readLen, uint8_t* buffer) {
+static bool handleMemRead(const uint8_t internal_id, const uint32_t memAddr, const uint8_t readLen, uint8_t* buffer) {
   bool result = false;
 
   if (memAddr < calibStartAddr) {
@@ -118,7 +118,7 @@ static bool handleMemRead(const uint32_t memAddr, const uint8_t readLen, uint8_t
   return result;
 }
 
-static bool handleMemWrite(const uint32_t memAddr, const uint8_t writeLen, const uint8_t* buffer) {
+static bool handleMemWrite(const uint8_t internal_id, const uint32_t memAddr, const uint8_t writeLen, const uint8_t* buffer) {
   bool result = false;
 
   if (memAddr < calibStartAddr) {
@@ -273,9 +273,9 @@ static void estimatePositionCrossingBeams(const pulseProcessor_t *state, pulsePr
     if (isfinite(ext_pos.pos[0]) && isfinite(ext_pos.pos[1]) && isfinite(ext_pos.pos[2])) {
       ext_pos.stdDev = 0.01;
       ext_pos.source = MeasurementSourceLighthouse;
-      #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
-        estimatorEnqueuePosition(&ext_pos);
-      #endif
+      // #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
+        // estimatorEnqueuePosition(&ext_pos);
+      // #endif
     }
   } else {
     deltaLog = 0;
@@ -304,12 +304,12 @@ static void estimatePositionSweepsLh1(const pulseProcessor_t* appState, pulsePro
         sweepInfo.calib = &bsCalib->sweep[0];
         sweepInfo.sweepId = 0;
 
-        #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
-          estimatorEnqueueSweepAngles(&sweepInfo);
+        // #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
+          // estimatorEnqueueSweepAngles(&sweepInfo);
 
           STATS_CNT_RATE_EVENT(bsEstRates[baseStation]);
           STATS_CNT_RATE_EVENT(&positionRate);
-        #endif
+        // #endif
       }
 
       sweepInfo.measuredSweepAngle = measurement->angles[1];
@@ -319,12 +319,12 @@ static void estimatePositionSweepsLh1(const pulseProcessor_t* appState, pulsePro
         sweepInfo.calib = &bsCalib->sweep[1];
         sweepInfo.sweepId = 1;
 
-        #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
-          estimatorEnqueueSweepAngles(&sweepInfo);
+        // #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
+        //   estimatorEnqueueSweepAngles(&sweepInfo);
 
           STATS_CNT_RATE_EVENT(bsEstRates[baseStation]);
           STATS_CNT_RATE_EVENT(&positionRate);
-        #endif
+        // #endif
       }
     }
   }
@@ -351,12 +351,12 @@ static void estimatePositionSweepsLh2(const pulseProcessor_t* appState, pulsePro
         sweepInfo.t = -t30;
         sweepInfo.calib = &bsCalib->sweep[0];
         sweepInfo.sweepId = 0;
-        #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
-          estimatorEnqueueSweepAngles(&sweepInfo);
+        // #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
+        //   estimatorEnqueueSweepAngles(&sweepInfo);
 
           STATS_CNT_RATE_EVENT(bsEstRates[baseStation]);
           STATS_CNT_RATE_EVENT(&positionRate);
-        #endif
+        // #endif
       }
 
       sweepInfo.measuredSweepAngle = measurement->angles[1];
@@ -364,12 +364,12 @@ static void estimatePositionSweepsLh2(const pulseProcessor_t* appState, pulsePro
         sweepInfo.t = t30;
         sweepInfo.calib = &bsCalib->sweep[1];
         sweepInfo.sweepId = 1;
-        #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
-          estimatorEnqueueSweepAngles(&sweepInfo);
+        // #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
+        //   estimatorEnqueueSweepAngles(&sweepInfo);
 
           STATS_CNT_RATE_EVENT(bsEstRates[baseStation]);
           STATS_CNT_RATE_EVENT(&positionRate);
-        #endif
+        // #endif
       }
     }
   }
@@ -454,10 +454,10 @@ static void estimateYaw(const pulseProcessor_t *state, pulseProcessorResult_t* a
   // Calculate yaw delta using only one base station for now
   float yawDelta;
   if (estimateYawDeltaOneBaseStation(baseStation, angles, state->bsGeometry, cfPos, n, &RR, &yawDelta)) {
-    #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
-      yawErrorMeasurement_t yawDeltaMeasurement = {.yawError = yawDelta, .stdDev = 0.01};
-      estimatorEnqueueYawError(&yawDeltaMeasurement);
-    #endif
+    // #ifndef CONFIG_DECK_LIGHTHOUSE_AS_GROUNDTRUTH
+    //   yawErrorMeasurement_t yawDeltaMeasurement = {.yawError = yawDelta, .stdDev = 0.01};
+    //   estimatorEnqueueYawError(&yawDeltaMeasurement);
+    // #endif
   }
 }
 
